@@ -1,0 +1,22 @@
+{
+  "name": "nepse-data",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An owned, append-only archive of NEPSE end-of-day prices",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "scrape": "tsx src/cli.ts scrape",
+    "scrape:dry": "tsx src/cli.ts scrape --dry-run",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

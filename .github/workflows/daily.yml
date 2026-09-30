@@ -1,0 +1,88 @@
+name: Daily prices
+
+# Fetches the session and commits it. This is the whole point of the repository.
+#
+# ## Why the schedule looks like this
+#
+# NEPSE trades **Sunday to Thursday** — not Monday to Friday — and closes at 15:00
+# Nepal time, which is UTC+05:45. GitHub's cron is UTC, so:
+#
+#   - `0-4` in the day-of-week field is Sunday through Thursday *in UTC*, which is the
+#     same set of days in Nepal, because the offset is under six hours.
+#   - `15 10` is 10:15 UTC, which is 16:00 in Kathmandu — an hour after the close, so
+#     final figures have been published, and early enough that the rest of the day is
+#     left free if the run needs retrying by hand.
+#
+# A run on a holiday is harmless rather than merely tolerable: the source keeps
+# reporting the previous session, whose file already exists and is byte-identical, so
+# the job finds nothing to commit and exits.
+#
+# ## Why the commit matters beyond the data
+#
+# GitHub disables scheduled workflows after **60 days of repository inactivity**. A job
+# that only called an external API and never touched the repository would be switched
+# off silently — and the discovery would be a gap in the archive. Committing the day's
+# file is what keeps the schedule alive, so the design defect is avoided by the design
+# itself rather than by a workaround.
+
+on:
+  schedule:
+    - cron: "15 10 * * 0-4"
+  # So a failed or missed day can be picked up without waiting for tomorrow. Safe to
+  # press repeatedly: re-fetching a session already archived writes nothing.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never two at once. A manual dispatch during a scheduled run would otherwise race on
+# the same file.
+concurrency:
+  group: daily-prices
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The format is checked before the fetch, not after: a parser that has silently
+      # stopped working should fail the run rather than commit an empty day.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Fetch the session
+        # Not `pnpm fetch` — that is a pnpm built-in which populates the package store,
+        # exits 0 and archives nothing. See the note in src/cli.ts.
+        run: pnpm scrape
+
+      - name: Commit if anything changed
+        run: |
+          git add data
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — the session is already archived."
+            exit 0
+          fi
+
+          SESSION=$(git diff --cached --name-only -- data | head -1 | xargs -r basename | sed 's/\.csv$//')
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "data: ${SESSION:-session} end-of-day prices"
+          git push

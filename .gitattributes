@@ -1,0 +1,9 @@
+# The data files are written with CRLF terminators, deliberately — RFC 4180 says so and
+# every spreadsheet accepts it. Without this line git would normalise them to LF on
+# commit (if `core.autocrlf` is set anywhere), and the file in the repository would stop
+# being byte-identical to the file the scraper produces — which is exactly the property
+# the daily job relies on to decide there is nothing to commit.
+data/**/*.csv -text
+
+# The captured page fixture is gzipped, so it is binary and must not be diffed as text.
+tests/fixtures/*.gz binary

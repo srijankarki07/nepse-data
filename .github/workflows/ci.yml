@@ -1,0 +1,34 @@
+name: CI
+
+# The scheduled job validates itself before it fetches, so this is not what protects the
+# archive. It exists so a change made away from the schedule — a parser fix, a new
+# column — is checked before it reaches the branch the daily job commits to, where a
+# broken parser would be discovered by the archive failing to grow.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
