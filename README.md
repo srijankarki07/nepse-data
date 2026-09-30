@@ -14,6 +14,9 @@ on another person's dataset being maintained.
 >
 > The repository is **private** deliberately, and should stay private until the whole
 > archive is the output of this scraper. See [Provenance](#provenance).
+>
+> **Not yet pushed**, and the workflow has never run. [HANDOFF.md](HANDOFF.md) has the one
+> blocker, the current state, and every backfill route already tried and ruled out.
 
 ## Layout
 
