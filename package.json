@@ -10,6 +10,7 @@
   "scripts": {
     "scrape": "tsx src/cli.ts scrape",
     "scrape:dry": "tsx src/cli.ts scrape --dry-run",
+    "backfill": "tsx src/cli.ts backfill",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

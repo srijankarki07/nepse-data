@@ -63,7 +63,7 @@ export const USER_AGENT =
   "nepse-data/0.1 (+https://github.com/srijankarki07/nepse-data; end-of-day archive)";
 
 /** The table's id. Stable, and the reason a table can be found without guessing. */
-const TABLE_ID = "headFixed";
+export const TABLE_ID = "headFixed";
 
 /**
  * A floor on how many scrips a session must contain before it is believed.
@@ -203,9 +203,13 @@ function resolveColumns(header: readonly string[]): Record<Field, number> {
  * structural fault, and the backfill must not continue past one of those.
  */
 export class ImplausibleSessionError extends Error {
-  constructor(message: string) {
+  /** How many scrips it did parse, so a caller can report and re-run without reparsing. */
+  readonly rows: number;
+
+  constructor(message: string, rows: number) {
     super(message);
     this.name = "ImplausibleSessionError";
+    this.rows = rows;
   }
 }
 
@@ -303,6 +307,7 @@ function parseFragment(html: string, options: FragmentOptions): FragmentOutcome 
     throw new ImplausibleSessionError(
       `Only ${rows.length} scrips parsed, below the floor of ${options.minRows}. ` +
         "Treating this as a partial response rather than a quiet session.",
+      rows.length,
     );
   }
 
@@ -325,7 +330,7 @@ export function parseTodaySharePrice(html: string): DaySnapshot {
 
   if (outcome.kind === "empty") {
     // Unreachable: `allowEmpty: false` sends a zero-row table to the floor check above.
-    throw new ImplausibleSessionError("The price table had no rows.");
+    throw new ImplausibleSessionError("The price table had no rows.", 0);
   }
 
   return outcome.snapshot;
