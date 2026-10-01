@@ -39,9 +39,9 @@ on:
         required: false
         default: ""
       min_rows:
-        description: "Refuse a session with fewer scrips than this"
+        description: "Refuse a session with fewer scrips than this. Early sessions are tiny — Jan 2011 has days of 4."
         required: false
-        default: "10"
+        default: "3"
 
 permissions:
   contents: write

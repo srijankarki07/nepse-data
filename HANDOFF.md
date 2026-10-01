@@ -9,20 +9,17 @@ The README describes what the project *is*. This describes the state it is *in*.
 
 ## Do this first
 
-```bash
-# 1. The push is rejected: the token lacks the `workflow` scope that GitHub requires
-#    before an OAuth app may create .github/workflows/* — and any push carrying those
-#    files is refused, not just the first one. Opens a browser flow.
-gh auth refresh -h github.com -s workflow
+Nothing is blocked. The push works, both branches are on the remote, and every workflow
+has run on a runner.
 
-# 2. `feat/backfill` is committed and `origin` is already wired up.
-cd /run/media/srijan/Storage/Documents/nepse-data
-git push -u origin feat/backfill
-```
+The next real step is the sweep — see [Roadmap](#roadmap) — and it is worth dispatching a
+narrow range before the full one, because the two things that can go wrong (a rate limit
+at hour one, a token that dies mid-run) only show up over distance.
 
-Then merge to `main` once it is reviewed, and trigger the daily workflow by hand once
-(`Actions → Daily prices → Run workflow`) to confirm it runs on a GitHub runner before
-trusting the schedule.
+If a push is ever refused with `refusing to allow an OAuth App to create or update
+workflow … without 'workflow' scope`, the token has lost the scope and needs
+`gh auth refresh -h github.com -s workflow`. Note it is needed for *any* push carrying
+`.github/workflows/*`, not just the first.
 
 ---
 
@@ -30,11 +27,12 @@ trusting the schedule.
 
 | | |
 | --- | --- |
-| Repository | `github.com/srijankarki07/nepse-data` — **created, private, and empty** |
-| Branch | `feat/backfill`, two commits on top of `main`'s two, **not pushed** |
-| Blocked on | the `workflow` token scope (above) — nothing else |
+| Repository | `github.com/srijankarki07/nepse-data` — **private, pushed, default branch `main`** |
+| Branches | `feat/backfill` merged to `main` with `--no-ff`; both on the remote |
+| Blocked on | **nothing** |
+| Workflows | CI green on the merge; `Daily prices` and `Backfill history` both dispatched successfully |
 | Tests | 90 passing, typecheck clean |
-| Data files | 5 — `2026-09-30` plus four days of `2024-06` from the first real backfill run |
+| Data files | 5 — `2026-09-30`, plus four days of `2024-06` from the first real backfill run |
 
 ---
 
@@ -54,24 +52,27 @@ Everything below was checked by running it, not by reading it.
 
 ## What is *not* verified
 
-- **Neither workflow has ever run.** Neither file has been pushed, so no scheduled or
-  manual run has happened. The cron expression, the pnpm setup, and the commit steps are
-  reasoned but unexecuted.
-- **Never run on a non-trading day** other than the captured response — the no-op follows
-  from the source reporting the previous session, and idempotency was verified, but not
-  the two together across a real holiday in the daily job.
-- **Never run from a GitHub runner.** Fetching works from this machine. A runner's
-  network path, and whether ShareSansar treats a runner's IP differently, are untested —
-  which is why the workflow should be dispatched over a *five-day* range before a
-  fifteen-year one.
-- **The full sweep has never been run.** Only 2024-06-10 → 2024-06-14 has. The per-year
-  scrip counts the report produces are the input to setting the floor, and nobody has
-  looked at them yet.
+- **The full sweep has never been run.** Only 2024-06-10 → 14 and 2011-01-01 → 06 have.
 - **Whether one session token survives 105 minutes.** Re-auth on `419` is implemented and
   tested against a fake, but not against a real expiry mid-sweep.
 - **Whether the site throttles a long sweep.** 5,750 requests from one address in two
   hours is a plausible thing to rate-limit. Backoff on `429` exists; it has not been
   provoked.
+- **How many days the source's bundling artifact affects.** See the trap below. One is
+  known (`2011-01-03`); whether it is a handful across the range or concentrated in early
+  2011 is unknown until a sweep runs.
+- **Never run on a non-trading day in the daily job** — the no-op follows from the source
+  reporting the previous session, and idempotency was verified, but not across a real
+  holiday.
+
+### Now verified, having not been before
+
+| Claim | How |
+| --- | --- |
+| CI runs | Green on the merge to `main`, 21 s |
+| **A GitHub runner can reach ShareSansar** | The daily workflow ran on a runner: 90 tests passed, 352 scrips fetched, *"Unchanged — already archived"* |
+| The dated route works from a runner | A 5-day dispatch over 2011-01-01 → 06 fetched real sessions through the CSRF/cookie path |
+| The daily job is a no-op when the session is archived | The same dispatch found nothing to commit and exited 0 |
 
 ---
 
@@ -91,6 +92,19 @@ only accepted on the page's own evidence — `No Record Found.` or a stated coun
 and anything else throws. Note the site writes **`Compaines`**, so the marker is matched
 as `Comp\w*`; matching only the correct spelling would mean the evidence silently stopped
 being found the day the typo is fixed.
+
+**The source sometimes bundles two sessions into one response.** `2011-01-03` returns
+every scrip twice, and the second row opens exactly where the first closed — so it is two
+consecutive sessions, not a duplicated row. The parser refuses duplicate scrips by design
+(that guard is what catches a genuinely malformed table), so such a day is reported as
+**failed**, with the reason, rather than resolved by guessing which row is the session.
+Expect a handful of these; they are the source's, and re-running will not fix them.
+
+**A floor of 10 was wrong and was measured down to 3.** Early sessions are not a smaller
+version of today's market but a tiny one: January 2011 has days of 4, 5 and 6 scrips. The
+first guess refused every real session in the first weeks of the range. The floor is a
+compromise at these counts — truncation and a genuinely tiny market look alike — which is
+exactly why the sweep reports per-year min/median/max.
 
 **The dated route echoes the requested date in its heading.** So on that route the
 heading is not independent confirmation — it is the request, read back. It still earns its
@@ -176,14 +190,13 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 
 ## Roadmap
 
-1. **Push the branch** (blocked on the token scope above), merge, then prove the schedule:
-   one manual dispatch, then a week to confirm the archive grows by the right number of
-   sessions.
-2. **Run the real sweep**, in this order: a five-day dispatch to prove a runner can reach
-   the site at all, then 2011 alone, then the full range. Before the full run, calibrate
-   the floor with
-   `pnpm backfill --from 2011-01-01 --to 2011-12-31 --dry-run --min-rows 1` and read the
-   per-year counts.
+1. **Let the schedule prove itself.** The daily job has been dispatched by hand and
+   worked; leave it a week and confirm the archive grew by the right number of sessions.
+2. **Run the real sweep**, in this order: a narrow unarchived range first (2011-01-01 →
+   06 has been done and works), then 2011 alone, then the full `2011-01-01 → today`.
+   Watch the per-year report on the first real year before committing to the rest —
+   its minimum is the evidence for whether `--min-rows 3` is right, and 2011-01-03
+   shows the kind of day that will come back as failed.
 3. **Wire it into Bachat Khata.** Phase 2/3 of that project: the historical chart needs a
    price-history store, which is what this repository is. The backend currently sources
    prices from a community dataset instead.
@@ -202,7 +215,7 @@ Worth doing both runs together, because they exercise the same seam.
 | --- | --- | --- |
 | `backend` | `docs/portfolio-reference` | 5 stacked local commits. `test:cov` green, 1000 tests |
 | `bachat-khata` | `35-feat-portfolio` | 1 local commit. 168 tests, build green |
-| `nepse-data` | `feat/backfill` | This repository. 2 commits on top of `main`, not yet pushed |
+| `nepse-data` | `main` | This repository. Merged and pushed; CI green; 90 tests |
 
 The backend's `docs/features/portfolio.md` has a **"Trying it against a real statement"**
 runbook — the sequence for the first live run, what each step should show, and the two
