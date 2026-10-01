@@ -6,25 +6,27 @@ Every figure comes from a scraper in this repository, runs on a schedule in this
 repository, and lands as a plain CSV committed to this repository. Nothing here depends
 on another person's dataset being maintained.
 
-> **Status — private, and missing its history.**
+> **Status — backfillable, and not yet pushed.**
 >
-> The daily pipeline works and is tested. The **historical backfill does not exist yet**,
-> so the archive starts from whichever day it is first run and grows forward from there.
-> See [The gap](#the-gap-backfill) for what that needs and why it is not simply done.
+> The daily pipeline works and is tested, and so does the **backfill**, which can reach
+> back to 2011 — so the archive no longer has to start on the day it was first run. See
+> [Backfilling history](#backfilling-history).
 >
 > The repository is **private** deliberately, and should stay private until the whole
-> archive is the output of this scraper. See [Provenance](#provenance).
+> archive is the output of this scraper. The backfill is what makes that condition
+> reachable; see [Provenance](#provenance).
 >
-> **Not yet pushed**, and the workflow has never run. [HANDOFF.md](HANDOFF.md) has the one
-> blocker, the current state, and every backfill route already tried and ruled out.
+> **Not yet pushed**, and neither workflow has run. [HANDOFF.md](HANDOFF.md) has the one
+> blocker and the current state.
 
 ## Layout
 
 ```
 data/daily/2026/2026-09-30.csv    one file per trading session, ~18 KB
 src/                              the scraper and the CLI
-tests/                            including a real captured page as a fixture
+tests/                            including real captured responses as fixtures
 .github/workflows/daily.yml       fetches and commits, every trading day
+.github/workflows/backfill.yml    fills in the past, dispatched by hand
 ```
 
 **Daily files, not per-symbol files.** One file holds every scrip the source listed that
@@ -91,27 +93,60 @@ pnpm install
 pnpm scrape:dry   # fetch and report, write nothing
 pnpm scrape       # fetch and write data/daily/<year>/<date>.csv
 pnpm test
+
+pnpm backfill --from 2024-06-10 --to 2024-06-14 --dry-run   # look before writing
+pnpm backfill --from 2011-01-01                              # to yesterday, by default
 ```
 
-## The gap: backfill
+## Backfilling history
 
-**There is no history here.** The archive begins on the day it is first run.
+The daily pipeline is the part that has to work forever. The backfill is the part that
+works once, and it reaches back to **2011**.
 
-The daily pipeline is the part that has to work forever, and it does. The backfill is the
-part that has to work *once*, and it is harder than it looks — which is why it is
-described rather than half-built:
+The daily page cannot be asked for a past date: its date picker sits in a form that posts
+to a route answering `405`, `?date=` is ignored, and the path form `404`s. The route that
+works is not in the markup at all — it is in the site's own JavaScript, where the Search
+button turns out to be a click handler rather than a form submission:
 
-- **The daily page cannot be asked for a past date.** It carries a date picker, but the
-  form it sits in does `POST` to a route that answers `405 Method Not Allowed`, `?date=`
-  is ignored, and the path form `404`s. Anything that fixes this needs the site's own
-  JavaScript read, not its HTML.
-- **The per-company pages are not regex-parseable.** `sharesansar.com/company/NABIL`
-  loads and has a price-history section, but its `</table>` tags are unbalanced, so a
-  reader like the one in `src/lib/html.ts` finds no rows. That needs a real HTML parser,
-  which is a dependency this repository has so far avoided.
+```
+POST https://www.sharesansar.com/ajaxtodayshareprice
+_token=<csrf>&sector=all_sec&date=YYYY-MM-DD
+```
 
-Either route is a few hours of work with the site open in front of you. Until then the
-honest position is that this is an archive with a start date, not a history.
+It re-renders the same `#headFixed` table the daily parser already reads. So the backfill
+reuses that parser unchanged, and the HTML-parser dependency that the per-company pages
+would have needed is not needed at all.
+
+**One request per calendar day.** The endpoint has no range parameter — `fromdate` and
+`todate` are accepted and silently ignored — so a sweep has to ask about every day,
+including the ones the market was shut. The full range is about **5,750 requests at
+1.1 s, so roughly 105 minutes**.
+
+`pnpm backfill` runs it locally; `.github/workflows/backfill.yml` runs it a year at a
+time from a runner. Both are safe to interrupt — a day already on disk is skipped without
+a request, so a re-run resumes rather than repeats.
+
+Three things it refuses to do, each of which would corrupt the archive quietly:
+
+- **Treat zero rows as a holiday.** A response truncated at the header boundary also has
+  zero rows. Emptiness is accepted only when the page says so itself — `No Record Found.`
+  or a stated count of zero — and an unexplained empty response is an error. (The site
+  spells it `Compaines`; the marker is matched loosely, or it would stop being found the
+  day the typo is fixed.)
+- **Trust one response about its own date.** The heading echoes the date that was asked
+  for, so an endpoint serving the present under a past heading would look correct. The
+  sweep compares the *table* across days instead, and aborts if two dates return the same
+  prices.
+- **Weaken the daily floor.** Today's market is ~350 scrips, and the daily floor of 50
+  guards a truncated response. In 2011 the whole market was around 70, so history has its
+  own lower floor — and the sweep reports per-year scrip counts so that floor can be set
+  from measurement rather than from a guess.
+
+The sweep starts at 2011 because that is where coverage becomes real. Before it, the
+history is sparse and patchy — 2006 has sessions with three scrips, and some *trading*
+days are absent entirely — so an earlier sweep would spend thousands of requests
+recovering a handful of near-empty files, and leave gaps that look like scraper bugs but
+are the source's.
 
 ## Provenance
 
@@ -126,15 +161,26 @@ question entirely, and the value — a dataset this project owns and can rely on
 depend on it being public.
 
 It can be made public later without changing any code, and there is a condition for
-doing so: **the whole archive must be the output of this scraper**, including whatever
-backfill lands. A history seeded from another community dataset would carry that
-project's compilation into this one, and no later commit removes it from the git history.
+doing so: **the whole archive must be the output of this scraper**, including the
+backfill. A history seeded from another community dataset would carry that project's
+compilation into this one, and no later commit removes it from the git history.
+
+The backfill meets that condition. It is this repository's scraper reading the same
+source — not an import from anywhere else — so the archive becomes publishable once the
+sweep has run, without a single byte of somebody else's compilation entering the history.
 
 The code is MIT (see `LICENSE`). The data is not covered by it.
 
 ## Known limitations
 
-- **No historical backfill** — see [The gap](#the-gap-backfill).
+- **History before 2011 is not attempted.** The source's coverage is patchy before then,
+  with some trading days absent entirely. See [Backfilling history](#backfilling-history).
+- **A day the market was shut leaves no file.** The archive records the sessions that
+  happened, not the days that did not, so a gap in the dates is ambiguous by itself — it
+  may mean the market was closed, or that a sweep has not reached that day yet.
+- **The historical floor is a starting point, not a calibration.** It is set well below
+  any known session in range and is meant to be adjusted with `--min-rows` from the
+  per-year counts a sweep reports.
 - **One source.** If ShareSansar changes its markup or blocks the job, the archive stops
   growing. The failure is loud rather than silent: the parser refuses a page whose table
   or columns it cannot find, and the workflow fails.

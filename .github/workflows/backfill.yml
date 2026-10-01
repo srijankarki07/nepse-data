@@ -1,0 +1,132 @@
+name: Backfill history
+
+# Fills in the past. Run by hand, once, and re-run whenever it is interrupted — days
+# already on disk are skipped without a single request, so a re-dispatch resumes rather
+# than repeats.
+#
+# ## Why it is dispatched by hand rather than scheduled
+#
+# This is not an ongoing job. The daily workflow is what keeps the archive growing; this
+# exists to close the gap before the archive existed, and once the gap is closed it has
+# nothing to do. A schedule would re-walk years of already-archived days every month to
+# confirm they are still there.
+#
+# ## Why one year at a time
+#
+# A full sweep is roughly 5,750 requests at 1.1s each — about 105 minutes. Committing
+# per year means a run that is killed loses at most the year it was in, a re-dispatch
+# skips everything already archived, and the history gains ~16 readable commits instead
+# of one enormous one. `|| status=1` lets a bad year be recorded without abandoning the
+# fifteen good ones; the run still ends red, because an unresolved year is worth seeing.
+#
+# ## Why it shares the daily job's concurrency group
+#
+# `daily-prices` is the same group `daily.yml` uses, which means a backfill *queues* the
+# 10:15 UTC daily run rather than racing it. That delay is the point: two jobs writing
+# and pushing to `main` at once can leave the loser's push rejected, and the loser would
+# most likely be the daily job — whose failure mode is a trading day quietly never
+# appearing in the archive. A delayed daily run is visible; a lost one is not.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "First day to fetch (YYYY-MM-DD)"
+        required: true
+        default: "2011-01-01"
+      to:
+        description: "Last day to fetch (YYYY-MM-DD). Empty means yesterday in Kathmandu."
+        required: false
+        default: ""
+      min_rows:
+        description: "Refuse a session with fewer scrips than this"
+        required: false
+        default: "10"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-prices
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+
+    # Well under the six-hour default, so a hung socket fails the job instead of burning
+    # the ceiling. The full range needs about 105 minutes.
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Checked before the sweep rather than after. A parser that has silently stopped
+      # working should fail here, not commit thousands of files that prove it.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Backfill, one year at a time
+        env:
+          FROM_INPUT: ${{ inputs.from }}
+          TO_INPUT: ${{ inputs.to }}
+          MIN_ROWS: ${{ inputs.min_rows }}
+        run: |
+          set -uo pipefail
+
+          # Yesterday in Kathmandu, not in UTC: at 18:20 UTC it is already tomorrow
+          # there, and the day that has not closed yet is still changing.
+          TO="${TO_INPUT:-$(TZ=Asia/Kathmandu date -d yesterday +%F)}"
+          FROM="$FROM_INPUT"
+
+          echo "Backfilling ${FROM} → ${TO}, floor ${MIN_ROWS} scrips."
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          status=0
+
+          for year in $(seq "${FROM%%-*}" "${TO%%-*}"); do
+            first="${year}-01-01"
+            last="${year}-12-31"
+
+            # Clamp the year to the requested range, so the first and last years are
+            # partial rather than over-reaching into days nobody asked for.
+            [[ "$first" < "$FROM" ]] && first="$FROM"
+            [[ "$last"  > "$TO"   ]] && last="$TO"
+
+            echo "::group::Backfilling ${first} → ${last}"
+
+            # `backfill`, not `fetch` — see the note in src/cli.ts about pnpm builtins.
+            pnpm backfill --from "$first" --to "$last" --min-rows "$MIN_ROWS" || status=1
+
+            echo "::endgroup::"
+
+            # Committed per year so an interrupted run keeps the years it finished.
+            git add data
+
+            if git diff --cached --quiet; then
+              echo "Nothing new for ${year}."
+            else
+              git commit -m "data: backfill ${first} to ${last}"
+              git push
+            fi
+          done
+
+          # Red if any year was left unresolved. The days themselves are recoverable —
+          # re-dispatch with the same range and only the gaps are fetched.
+          exit "$status"
