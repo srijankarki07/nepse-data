@@ -134,9 +134,10 @@ Three things it refuses to do, each of which would corrupt the archive quietly:
   spells it `Compaines`; the marker is matched loosely, or it would stop being found the
   day the typo is fixed.)
 - **Trust one response about its own date.** The heading echoes the date that was asked
-  for, so an endpoint serving the present under a past heading would look correct. The
-  sweep compares the *table* across days instead, and aborts if two dates return the same
-  prices.
+  for, so an endpoint serving one session under another date's heading would look
+  correct. The sweep compares the *table* across days instead, refuses the day when two
+  dates return identical prices, and stops only if they run consecutively — a single one
+  is a hole in the source, a run of them is the endpoint failing.
 - **Weaken the daily floor.** Today's market is ~350 scrips and the daily floor of 50
   guards a truncated response. History is not a smaller version of that market but a
   *tiny* one: measured directly, January 2011 has sessions of **4, 5 and 6 scrips**. So
