@@ -82,19 +82,25 @@ export const MIN_PLAUSIBLE_ROWS = 50;
  * The floor for a day fetched *by date*, as opposed to the floor for today's page.
  *
  * The daily floor of 50 is calibrated against a market of ~350 scrips and guards a
- * truncated response. History is a different problem: in 2011 the whole market was
- * around 70 scrips, and a floor tuned to today would refuse every real session in the
- * first years of a sweep. This sits an order of magnitude below the smallest session
- * the source is known to have published inside the sweep's range, which still catches a
- * response that lost most of its rows while accepting a genuinely small market.
+ * truncated response. History is a different problem, and the difference is larger than
+ * it first appears: the earliest sessions in the sweep's range are not a smaller version
+ * of today's market, they are a *tiny* one. Measured directly rather than assumed —
+ * January 2011 has sessions of 4, 5 and 6 scrips, and 2011 only reaches ~84 by November.
+ * A floor of 10, which was the first guess here, refused every real session in the first
+ * weeks of the range.
+ *
+ * So this sits as low as it can while still doing its job. What it guards against is a
+ * response that lost most of its rows; what it must not do is refuse a market that
+ * genuinely had four listings. At these counts the two are close to indistinguishable,
+ * which is why the sweep *reports* the per-year minimum, median and maximum — a year
+ * whose minimum sits far below its median is the signature of truncation that still
+ * cleared the floor, and it is visible in the log without any extra machinery.
  *
  * It is deliberately **not** a per-year table. Such a table would be a set of numbers
  * invented from a handful of samples, and this repository's rule is to refuse rather
- * than to guess. The sweep instead *measures* the per-year scrip counts and reports
- * them, so that an operator sets the floor from evidence rather than from a number
- * somebody wrote down once.
+ * than to guess. `--min-rows` overrides it, per day or per run.
  */
-export const MIN_HISTORICAL_ROWS = 10;
+export const MIN_HISTORICAL_ROWS = 3;
 
 /** The source column each stored field is read from, matched exactly. */
 const COLUMN_NAMES = {

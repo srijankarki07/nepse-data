@@ -137,16 +137,23 @@ Three things it refuses to do, each of which would corrupt the archive quietly:
   for, so an endpoint serving the present under a past heading would look correct. The
   sweep compares the *table* across days instead, and aborts if two dates return the same
   prices.
-- **Weaken the daily floor.** Today's market is ~350 scrips, and the daily floor of 50
-  guards a truncated response. In 2011 the whole market was around 70, so history has its
-  own lower floor — and the sweep reports per-year scrip counts so that floor can be set
-  from measurement rather than from a guess.
+- **Weaken the daily floor.** Today's market is ~350 scrips and the daily floor of 50
+  guards a truncated response. History is not a smaller version of that market but a
+  *tiny* one: measured directly, January 2011 has sessions of **4, 5 and 6 scrips**. So
+  history has its own floor, low enough not to refuse a market that genuinely had four
+  listings, and the sweep reports per-year counts so an operator can see when it is wrong.
 
-The sweep starts at 2011 because that is where coverage becomes real. Before it, the
-history is sparse and patchy — 2006 has sessions with three scrips, and some *trading*
-days are absent entirely — so an earlier sweep would spend thousands of requests
-recovering a handful of near-empty files, and leave gaps that look like scraper bugs but
-are the source's.
+The sweep starts at 2011 because that is where coverage begins to be usable, but the
+early years are thin and the source's history is genuinely holey — 2006 has sessions with
+three scrips, some *trading* days are absent entirely, and early 2011 only reaches ~84
+scrips by November. Gaps in the early archive are the source's, not the scraper's, and
+the sweep reports each day's outcome so the two cannot be confused.
+
+One artifact is worth knowing about: **the source occasionally bundles two consecutive
+sessions into one response.** `2011-01-03` returns every scrip twice, and the second row
+opens exactly where the first closed — so it is two sessions, not a duplicate. The
+archive's premise is one row per scrip per session, so such a day is reported as failed
+rather than guessed at, and it is listed with its reason at the end of a sweep.
 
 ## Provenance
 
@@ -178,9 +185,13 @@ The code is MIT (see `LICENSE`). The data is not covered by it.
 - **A day the market was shut leaves no file.** The archive records the sessions that
   happened, not the days that did not, so a gap in the dates is ambiguous by itself — it
   may mean the market was closed, or that a sweep has not reached that day yet.
-- **The historical floor is a starting point, not a calibration.** It is set well below
-  any known session in range and is meant to be adjusted with `--min-rows` from the
-  per-year counts a sweep reports.
+- **The historical floor is measured, but only against the days sampled.** It is 3,
+  because the smallest real session found in range has 4 scrips. At those counts a
+  truncated response and a genuinely tiny market look alike, so the per-year report is
+  what to check rather than the floor alone.
+- **A response bundling two sessions cannot be archived.** Early dates occasionally
+  return two rows per scrip; the day is reported as failed rather than resolved by
+  guessing which row is the session.
 - **One source.** If ShareSansar changes its markup or blocks the job, the archive stops
   growing. The failure is loud rather than silent: the parser refuses a page whose table
   or columns it cannot find, and the workflow fails.
