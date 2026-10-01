@@ -6,21 +6,22 @@ Every figure comes from a scraper in this repository, runs on a schedule in this
 repository, and lands as a plain CSV committed to this repository. Nothing here depends
 on another person's dataset being maintained.
 
-> **Status — fifteen years of history, and private.**
+> **Status — fifteen years of history, published.**
 >
 > The daily pipeline works and is tested, and the **backfill has been run**. The archive
 > holds **3,596 sessions** covering 2011 to today, every one of them this scraper's own
 > output. See [Backfilling history](#backfilling-history).
 >
-> The repository is **private** deliberately. The condition for making it public — that
-> the whole archive be this scraper's output, backfill included — is now **met**; see
-> [Provenance](#provenance). Whether to publish is a separate decision, not a blocker.
+> This repository is **public**. That was a decision rather than a default — a published
+> archive of these figures is redistribution, and the reasoning for and against is kept
+> in [Provenance](#provenance) rather than deleted now that the answer changed.
 >
 > [HANDOFF.md](HANDOFF.md) has the current state and what remains unverified.
 
 ## Layout
 
 ```
+data/latest.json                  the index — read this first
 data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
                                   3,596 files across 16 years, 38 MB in total
 src/                              the scraper and the CLI
@@ -76,6 +77,36 @@ committed file already has them:
   Sunday to Thursday and closes for holidays; on a non-trading day the page still
   renders, showing the *previous* session. Stamping today's date onto that would file a
   day that never traded, and nothing downstream could tell.
+
+## Reading it
+
+`data/latest.json` is the index, and the first thing a consumer reads:
+
+```json
+{
+  "latest": "2026-09-30",
+  "previous": "2026-09-29",
+  "sessions": 3596,
+  "years": { "2011": 222, "2012": 229, "...": 0 }
+}
+```
+
+A directory tree is not enumerable over the transports this data is read through —
+`raw.githubusercontent.com` and jsDelivr both serve *files*, and neither will list a
+directory — so without this a consumer has no way to learn which date to ask for. It is
+the difference between a dataset and a directory of files.
+
+`latest` and `previous` are the two most recent **sessions**, found by looking rather than
+by subtracting a day, because the market is shut two days in seven and for holidays. That
+pair is enough to price a holding and show its day change from a single fetch of
+`data/daily/<year>/<date>.csv` — and since one file holds every scrip for that session,
+that is **one request for the whole market**, rather than one per symbol.
+
+The file is rebuilt from the filenames on disk, never patched, so it cannot drift from the
+archive. It deliberately carries **no timestamp**: it is rewritten on every run, and a
+timestamp would make it differ every time — including on the days nothing happened, which
+is every holiday — so the daily job would find a change and commit every single day,
+losing the property that a non-trading day is a no-op.
 
 ## How it runs
 
@@ -184,22 +215,19 @@ The data is scraped from **ShareSansar**, which republishes the exchange's end-o
 figures. It is not obtained from NEPSE directly — the exchange's own API sits behind a
 token it generates in WebAssembly, which a scheduled job cannot reasonably obtain.
 
-**This is why the repository is private.** A public archive is redistribution, and
-nothing in the chain grants that: NEPSE's data is theirs, and ShareSansar publishes it
-under terms that permit reading rather than republishing. Keeping it private removes the
-question entirely, and the value — a dataset this project owns and can rely on — does not
-depend on it being public.
+**Publishing was a deliberate decision, not a default**, and the reasoning is kept on
+record now that the answer has changed. For most of this project's life the repository was
+private, and the reason was this: a published archive of these figures is redistribution,
+NEPSE's data is NEPSE's, and ShareSansar publishes it under terms that permit reading
+rather than republishing. Private removed the question entirely.
 
-It can be made public later without changing any code, and there is a condition for
-doing so: **the whole archive must be the output of this scraper**, including the
-backfill. A history seeded from another community dataset would carry that project's
-compilation into this one, and no later commit removes it from the git history.
+What made publishing available is the condition this repository set for itself: **the
+whole archive is this scraper's output.** All 3,596 sessions came from the code here
+reading the same source, and none was imported — so no other project's compilation is
+carried in the history, and no later commit could have removed it if one had been.
 
-The backfill meets that condition, and has now been run. Every one of the 3,596 sessions
-came from this repository's scraper reading the same source — not from an import — so no
-byte of anybody else's compilation has entered the history, and the repository is
-publishable whenever that is wanted. That is a decision, not a task: nothing in the code
-changes either way.
+It remains a judgement rather than a settled right. Anyone reusing this data is taking it
+on the same terms it was taken here.
 
 The code is MIT (see `LICENSE`). The data is not covered by it.
 

@@ -27,13 +27,20 @@ workflow … without 'workflow' scope`, the token has lost the scope and needs
 
 | | |
 | --- | --- |
-| Repository | `github.com/srijankarki07/nepse-data` — **private**, default branch `main` |
+| Repository | `github.com/srijankarki07/nepse-data` — **public**, default branch `main` |
 | Branches | `feat/backfill` merged to `main` with `--no-ff` |
 | Blocked on | **nothing** |
 | Workflows | all three have run on a runner; the daily job is verified end to end |
-| Tests | **99** passing, typecheck clean |
+| Tests | **108** passing, typecheck clean |
 | Archive | **3,596 sessions**, 2011-01-01 → 2026-09-30, 38 MB, ~16 years |
+| Index | `data/latest.json` — latest and previous session, worth reading first |
 | Unresolved | **7 days** out of 5,752 — all source artifacts, listed below |
+
+**Public is recent.** The repository was private for its whole life up to this point
+because publishing these figures is redistribution, and the reasoning is kept in the
+README's *Provenance* rather than deleted. What changed the answer is that the archive is
+now wholly this scraper's output — the condition the project had set for itself. If that
+judgement is revisited, the README is where the argument lives.
 
 ---
 
@@ -205,9 +212,12 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 
 ## Decisions already made, so they are not relitigated
 
-- **Private now, public later** — and only once the whole archive is this scraper's
-  output, backfill included. The backfill meets that condition; see the README's
-  *Provenance*.
+- **Published once the whole archive was this scraper's output** — which the finished
+  backfill made true. The reasoning for and against is in the README's *Provenance*.
+- **The index carries no timestamp.** It is rewritten on every run, so one would make it
+  differ every day — including every holiday — and the daily job would commit a change
+  daily, losing the no-op property. Freshness is `latest`, which moves only with the
+  market.
 - **One file per session, not one per scrip.** Per-symbol files rewritten daily is how
   the community repositories reached several hundred MB.
 - **Eight columns.** The source publishes twenty-four; the rest are derived on the page.
