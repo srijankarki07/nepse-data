@@ -32,7 +32,7 @@ import {
   runBackfill,
   type BackfillOptions,
 } from "./backfill.js";
-import { isArchived, writeSnapshot } from "./lib/archive.js";
+import { archivedCsv, writeSnapshot } from "./lib/archive.js";
 import { isRealDay, kathmanduToday, previousDay } from "./lib/dates.js";
 import { snapshotPath } from "./lib/paths.js";
 import { snapshotToCsv } from "./lib/serialize.js";
@@ -218,7 +218,7 @@ async function backfillCommand(argv: readonly string[]): Promise<number> {
 
   const summary = await runBackfill(options, {
     fetchDated: (date) => session.fetchDated(date),
-    isArchived: (date) => isArchived(REPO_ROOT, date),
+    readArchived: (date) => archivedCsv(REPO_ROOT, date),
     write: async (snapshot) => {
       await writeSnapshot(REPO_ROOT, snapshot);
     },
