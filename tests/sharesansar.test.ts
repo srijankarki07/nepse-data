@@ -20,8 +20,12 @@ import { describe, expect, it } from "vitest";
 
 import { extractTableById, textOf } from "../src/lib/html.js";
 import {
+  MIN_HISTORICAL_ROWS,
   MIN_PLAUSIBLE_ROWS,
+  companyCount,
+  emptySessionEvidence,
   parseAsOfDate,
+  parseBackfillDay,
   parseNumber,
   parseTodaySharePrice,
 } from "../src/sources/sharesansar.js";
@@ -32,6 +36,15 @@ const FIXTURE = path.resolve(
 );
 
 const realPage = gunzipSync(readFileSync(FIXTURE)).toString("utf8");
+
+/** A captured response, decompressed. See the note above about why these are real. */
+function fixture(name: string): string {
+  const file = path.resolve(fileURLToPath(new URL(".", import.meta.url)), `fixtures/${name}`);
+  return gunzipSync(readFileSync(file)).toString("utf8");
+}
+
+const datedCapture = fixture("ajaxtodayshareprice-2024-06-13.html.gz");
+const closedCapture = fixture("ajaxtodayshareprice-empty.html.gz");
 
 /** A minimal page carrying a table with the given header and rows. */
 function page(options: {
@@ -250,5 +263,104 @@ describe("textOf", () => {
 
   it("decodes the entities a price table uses", () => {
     expect(textOf("<td>A &amp; B</td>")).toBe("A & B");
+  });
+});
+
+describe("parseBackfillDay: the real dated response", () => {
+  it("reads a past session the same way it reads today's", () => {
+    const snapshot = parseBackfillDay(datedCapture, "2024-06-13", MIN_HISTORICAL_ROWS);
+
+    expect(snapshot?.date).toBe("2024-06-13");
+    expect(snapshot?.rows.length).toBeGreaterThan(MIN_PLAUSIBLE_ROWS);
+    expect(snapshot?.rows.find((entry) => entry.symbol === "NABIL")?.close).toBeGreaterThan(0);
+  });
+
+  it("refuses a response that answers for a different day", () => {
+    // The heading echoes the requested date on this route, so a mismatch means the
+    // endpoint went and got the current session instead — the exact behaviour every
+    // dead route in HANDOFF.md showed.
+    expect(() => parseBackfillDay(datedCapture, "2024-06-12")).toThrow(/fallen back/);
+  });
+
+  it("reports a day the market did not trade as no session", () => {
+    expect(parseBackfillDay(closedCapture, "2023-07-15")).toBeNull();
+  });
+});
+
+describe("the evidence that a day had no session", () => {
+  it("finds it in the real closed-day response", () => {
+    expect(companyCount(closedCapture)).toBe(0);
+    // The site writes "Compaines". A rule matching only the correct spelling would stop
+    // finding this the day the typo is fixed, and silently start refusing real holidays.
+    expect(emptySessionEvidence(closedCapture)).toContain("No Record Found");
+    expect(emptySessionEvidence(closedCapture)).toContain("company count of 0");
+  });
+
+  it("counts the scrips in a real open session", () => {
+    expect(companyCount(datedCapture)).toBeGreaterThan(MIN_PLAUSIBLE_ROWS);
+    expect(emptySessionEvidence(datedCapture)).toBeNull();
+  });
+});
+
+describe("parseBackfillDay: refusing to mistake truncation for a holiday", () => {
+  const header =
+    "<tr><th>S.No</th><th>Symbol</th><th>Open</th><th>High</th><th>Low</th>" +
+    "<th>Close</th><th>Vol</th><th>Turnover</th></tr>";
+
+  /** A response with a heading, an empty table, and whatever else is passed in. */
+  function response(date: string, extra: string): string {
+    return (
+      `<h5>As of : <span class="text-org">${date}</span></h5>` +
+      `<table id="headFixed"><thead>${header}</thead><tbody></tbody></table>${extra}`
+    );
+  }
+
+  it("refuses zero rows with no evidence at all", () => {
+    // This is the test that makes the whole rule worth having. A response truncated
+    // exactly at the header boundary looks identical to a holiday here, and treating it
+    // as one would drop a real session out of the archive with nothing in any log.
+    expect(() => parseBackfillDay(response("2024-06-13", ""), "2024-06-13")).toThrow(
+      /no evidence that the market was closed/,
+    );
+  });
+
+  it("refuses a page that contradicts itself", () => {
+    // No rows, but the page claims 287 companies. Something is wrong and which part is
+    // unknown, so neither the emptiness nor the count can be believed.
+    expect(() =>
+      parseBackfillDay(
+        response("2024-06-13", "<h4>Total number of Compaines: 287</h4>"),
+        "2024-06-13",
+      ),
+    ).toThrow(/contradicts itself/);
+  });
+
+  it("accepts emptiness the page states for itself", () => {
+    const html =
+      `<h5>As of : <span class="text-org">2024-06-13</span></h5>` +
+      `<table id="headFixed"><thead>${header}</thead>` +
+      `<tbody><tr><td colspan="19"> No Record Found.</td></tr></tbody></table>` +
+      `<h4>Total number of Compaines: 0</h4>`;
+
+    expect(parseBackfillDay(html, "2024-06-13")).toBeNull();
+  });
+
+  it("keeps the daily guard exactly where it was", () => {
+    // The backfill tolerates a closed day; today's page must not. An empty table on the
+    // daily route is a broken fetch, and writing it would replace a good file.
+    expect(() => parseTodaySharePrice(closedCapture)).toThrow(/partial response/);
+  });
+
+  it("applies the historical floor, not the daily one", () => {
+    const three =
+      `<h5>As of : <span class="text-org">2011-06-13</span></h5>` +
+      `<table id="headFixed"><thead>${header}</thead><tbody>` +
+      [0, 1, 2]
+        .map((n) => `<tr><td>${n}</td><td>S${n}</td><td>1</td><td>2</td><td>1</td><td>2</td><td>3</td><td>4</td></tr>`)
+        .join("") +
+      `</tbody></table>`;
+
+    expect(() => parseBackfillDay(three, "2011-06-13", 10)).toThrow(/below the floor of 10/);
+    expect(parseBackfillDay(three, "2011-06-13", 1)?.rows).toHaveLength(3);
   });
 });
