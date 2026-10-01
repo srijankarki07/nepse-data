@@ -100,6 +100,17 @@ consecutive sessions, not a duplicated row. The parser refuses duplicate scrips 
 **failed**, with the reason, rather than resolved by guessing which row is the session.
 Expect a handful of these; they are the source's, and re-running will not fix them.
 
+**The source also serves the previous session for days it has no data for.** `2011-06-20`
+returns `2011-06-19`'s table byte-for-byte under a `2011-06-20` heading — same 61 scrips,
+same prices. Only the heading is different, which is why a single response cannot detect
+it and why the sweep digests the *table*. Such a day is refused by name, not written.
+
+The first version of this guard aborted the whole sweep on the first repeat, and a 2011
+run stopped dead at 2011-06-20 having archived 103 sessions — losing July to December to
+one hole in the source. It now refuses the day and carries on, aborting only after
+`MAX_CONSECUTIVE_REPEATS` (10) in a row. If a sweep ever stops that way, the endpoint has
+genuinely broken.
+
 **A floor of 10 was wrong and was measured down to 3.** Early sessions are not a smaller
 version of today's market but a tiny one: January 2011 has days of 4, 5 and 6 scrips. The
 first guess refused every real session in the first weeks of the range. The floor is a

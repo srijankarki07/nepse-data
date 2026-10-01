@@ -27,6 +27,19 @@
  * legitimately, and it is the signature of exactly that failure. The digest is of the
  * table rather than of the whole response, because the heading differs by construction
  * and would make every day unique — detecting nothing.
+ *
+ * ## Why a repeat refuses the day rather than stopping the sweep
+ *
+ * This was measured the hard way. A first 2011 sweep stopped dead at 2011-06-20 and
+ * never reached July: the source, having no data for that day, served 2011-06-19's
+ * table under a 2011-06-20 heading. Real behaviour, correctly caught — and a reason to
+ * abandon 170 days of work, which the rest of the year did not deserve.
+ *
+ * So a repeat is now an outcome, not an abort: the day is not written (the guard still
+ * does its job), it is reported by name, and the sweep carries on. What still aborts is
+ * a *run* of them — because one day served from the day before is a hole in the source,
+ * while ten in a row is the endpoint failing, and only the second makes the remaining
+ * hours pointless.
  */
 
 import { createHash } from "node:crypto";
@@ -60,6 +73,16 @@ export const REQUEST_DELAY_MS = 1_100;
  */
 export const MAX_CONSECUTIVE_FAILURES = 5;
 
+/**
+ * How many days in a row may return a table already seen before the sweep gives up.
+ *
+ * Higher than the failure limit deliberately. One day served from the day before is a
+ * hole in the source, and a short run of them is an ordinary holiday — NEPSE closes for
+ * several days at a time. A *systematic* fallback, where the endpoint answers every date
+ * with the same session, is caught long before this and does not need a tight bound.
+ */
+export const MAX_CONSECUTIVE_REPEATS = 10;
+
 export interface BackfillOptions {
   from: string;
   to: string;
@@ -83,10 +106,23 @@ export interface YearStats {
   noSession: number;
   skipped: number;
   refused: number;
+  repeated: number;
   failed: number;
   minRows: number | null;
   medianRows: number | null;
   maxRows: number | null;
+}
+
+/**
+ * A day whose table was byte-identical to another date's.
+ *
+ * Not a failure of this scraper and not recoverable by re-running: the source has no
+ * data for the day and served the one before it. Named separately from `refused` so the
+ * report can say so, rather than offering a `--min-rows` re-run that would change nothing.
+ */
+export interface RepeatDay {
+  date: string;
+  matches: string;
 }
 
 export interface BackfillSummary {
@@ -94,6 +130,7 @@ export interface BackfillSummary {
   noSession: string[];
   skipped: string[];
   refused: Array<{ date: string; rows: number; message: string }>;
+  repeated: RepeatDay[];
   failed: Array<{ date: string; message: string }>;
   years: Map<string, YearStats>;
 }
@@ -104,6 +141,7 @@ interface Accumulator {
   noSession: string[];
   skipped: string[];
   refused: Array<{ date: string; rows: number; message: string }>;
+  repeated: RepeatDay[];
   failed: Array<{ date: string; message: string }>;
   countsByYear: Map<string, number[]>;
 }
@@ -114,6 +152,7 @@ function emptyAccumulator(): Accumulator {
     noSession: [],
     skipped: [],
     refused: [],
+    repeated: [],
     failed: [],
     countsByYear: new Map(),
   };
@@ -178,6 +217,7 @@ export async function runBackfill(
 
   let issued = 0;
   let consecutiveFailures = 0;
+  let consecutiveRepeats = 0;
 
   for (const date of days) {
     // Cheapest and most valuable check first: no network, no delay, and it is what
@@ -235,17 +275,29 @@ export async function runBackfill(
       continue;
     }
 
-    // Outside the parse try on purpose: a repeated table is a systematic break, not a
-    // bad day, and must propagate rather than be recorded and stepped over.
+    // Digest of the table, not of the whole response — see the note at the top.
     const digest = tableDigest(html);
     if (digest !== null) {
       const previous = digests.get(digest);
+
       if (previous !== undefined && previous !== date) {
-        throw new Error(
-          `${previous} and ${date} returned an identical table. The endpoint is serving ` +
-            "one session under many dates, so nothing from this sweep can be trusted.",
-        );
+        // Not written: the guard's whole purpose. The day is reported and stepped over.
+        consecutiveRepeats++;
+        accumulator.repeated.push({ date, matches: previous });
+        deps.log(`${date}  REPEATED    same table as ${previous}`);
+
+        if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
+          throw new Error(
+            `${consecutiveRepeats} days in a row returned a table already seen, most ` +
+              `recently ${date} matching ${previous}. One such day is a hole in the ` +
+              "source; a run of them means the endpoint is serving one session under " +
+              "many dates, so the sweep is stopping rather than trusting any of it.",
+          );
+        }
+        continue;
       }
+
+      consecutiveRepeats = 0;
       digests.set(digest, date);
     }
 
@@ -286,6 +338,7 @@ function summarise(accumulator: Accumulator): BackfillSummary {
     ...accumulator.skipped.map(yearOf),
     ...accumulator.noSession.map(yearOf),
     ...accumulator.refused.map((entry) => yearOf(entry.date)),
+    ...accumulator.repeated.map((entry) => yearOf(entry.date)),
     ...accumulator.failed.map((entry) => yearOf(entry.date)),
   ]);
 
@@ -298,6 +351,7 @@ function summarise(accumulator: Accumulator): BackfillSummary {
       noSession: accumulator.noSession.filter((date) => yearOf(date) === year).length,
       skipped: accumulator.skipped.filter((date) => yearOf(date) === year).length,
       refused: accumulator.refused.filter((entry) => yearOf(entry.date) === year).length,
+      repeated: accumulator.repeated.filter((entry) => yearOf(entry.date) === year).length,
       failed: accumulator.failed.filter((entry) => yearOf(entry.date) === year).length,
       minRows: counts.length === 0 ? null : Math.min(...counts),
       medianRows: counts.length === 0 ? null : median(counts),
@@ -310,6 +364,7 @@ function summarise(accumulator: Accumulator): BackfillSummary {
     noSession: accumulator.noSession,
     skipped: accumulator.skipped,
     refused: accumulator.refused,
+    repeated: accumulator.repeated,
     failed: accumulator.failed,
     years,
   };
@@ -340,6 +395,7 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
     lines.push(`    no session  ${stats.noSession} days`);
     lines.push(`    skipped     ${stats.skipped} days`);
     lines.push(`    refused     ${stats.refused} days`);
+    lines.push(`    repeated    ${stats.repeated} days`);
     lines.push(`    failed      ${stats.failed} days`);
     lines.push(`    scrips/day  ${scrips}`);
   }
@@ -352,6 +408,18 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
       lines.push(
         `  pnpm backfill --from ${entry.date} --to ${entry.date} --min-rows ${entry.rows}`,
       );
+    }
+  }
+
+  if (summary.repeated.length > 0) {
+    lines.push("");
+    lines.push(
+      "Days the source answered with another day's table. Not written, and re-running",
+    );
+    lines.push("will not change them — the data for these days is not in the source:");
+
+    for (const entry of summary.repeated) {
+      lines.push(`  ${entry.date}  identical to ${entry.matches}`);
     }
   }
 
@@ -368,7 +436,7 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
   lines.push(
     `Archived ${summary.archived.length}, skipped ${summary.skipped.length}, ` +
       `no session ${summary.noSession.length}, refused ${summary.refused.length}, ` +
-      `failed ${summary.failed.length}.`,
+      `repeated ${summary.repeated.length}, failed ${summary.failed.length}.`,
   );
 
   return lines.join("\n");
@@ -383,5 +451,9 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
  * confirmed by the source to have had no session.
  */
 export function exitCodeFor(summary: BackfillSummary): 0 | 1 {
-  return summary.refused.length > 0 || summary.failed.length > 0 ? 1 : 0;
+  return summary.refused.length > 0 ||
+    summary.repeated.length > 0 ||
+    summary.failed.length > 0
+    ? 1
+    : 0;
 }

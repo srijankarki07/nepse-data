@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   MAX_CONSECUTIVE_FAILURES,
+  MAX_CONSECUTIVE_REPEATS,
   REQUEST_DELAY_MS,
   exitCodeFor,
   formatSummary,
@@ -244,17 +245,80 @@ describe("runBackfill", () => {
     expect(summary.archived).toHaveLength(1);
   });
 
-  it("aborts when two different dates return the same table", async () => {
-    // The failure a single response cannot show: the site accepting the date and
-    // serving the present under it. Identical prices on two dates cannot be legitimate.
+  it("refuses a day that repeats another's table, without stopping the sweep", async () => {
+    // Measured against the real source, not invented: 2011-06-20 has no data, and the
+    // endpoint serves 2011-06-19's table under a 2011-06-20 heading. It has to be caught
+    // — but it cost a first sweep the whole second half of 2011 to abort on it, and the
+    // days either side were perfectly good.
+    const table = fragment("2024-06-10", 2);
     const responses = new Map<string, string | Error>([
-      ["2024-06-10", fragment("2024-06-10", 2)],
-      ["2024-06-11", fragment("2024-06-10", 2).replaceAll("2024-06-10", "2024-06-11")],
+      ["2024-06-10", table],
+      ["2024-06-11", table.replaceAll("2024-06-10", "2024-06-11")],
+      ["2024-06-12", fragment("2024-06-12", 3)],
+      ["2024-06-13", fragment("2024-06-13", 3)],
+      ["2024-06-14", fragment("2024-06-14", 3)],
     ]);
     const test = harness({ responses });
-    const options: BackfillOptions = { ...baseOptions, to: "2024-06-11" };
 
-    await expect(runBackfill(options, test.deps)).rejects.toThrow(/identical table/);
+    const summary = await runBackfill(baseOptions, test.deps);
+
+    expect(summary.repeated).toEqual([{ date: "2024-06-11", matches: "2024-06-10" }]);
+    // Not written — the guard's whole purpose — but the days after it still are.
+    expect(test.written.map((snapshot) => snapshot.date)).not.toContain("2024-06-11");
+    expect(summary.archived.map((entry) => entry.date)).toEqual([
+      "2024-06-10",
+      "2024-06-12",
+      "2024-06-13",
+      "2024-06-14",
+    ]);
+    expect(exitCodeFor(summary)).toBe(1);
+  });
+
+  it("stops when the repeats run consecutively, which is the endpoint failing", async () => {
+    // One day served from the day before is a hole in the source. Ten in a row is the
+    // endpoint answering every date with one session, and then nothing is worth fetching.
+    const table = fragment("2024-06-10", 2);
+    const responses = new Map<string, string | Error>();
+    const options: BackfillOptions = { ...baseOptions, from: "2024-06-10", to: "2024-06-30" };
+
+    for (const day of [
+      "2024-06-10",
+      "2024-06-11",
+      "2024-06-12",
+      "2024-06-13",
+      "2024-06-14",
+      "2024-06-15",
+      "2024-06-16",
+      "2024-06-17",
+      "2024-06-18",
+      "2024-06-19",
+      "2024-06-20",
+    ]) {
+      responses.set(day, table.replaceAll("2024-06-10", day));
+    }
+
+    const test = harness({ responses });
+
+    await expect(runBackfill(options, test.deps)).rejects.toThrow(/already seen/);
+    // The first day establishes the table; the next MAX_CONSECUTIVE_REPEATS are refusals.
+    expect(test.fetched).toHaveLength(MAX_CONSECUTIVE_REPEATS + 1);
+  });
+
+  it("resets the repeat count when a genuinely new session appears", async () => {
+    const table = fragment("2024-06-10", 2);
+    const responses = new Map<string, string | Error>([
+      ["2024-06-10", table],
+      ["2024-06-11", table.replaceAll("2024-06-10", "2024-06-11")],
+      ["2024-06-12", fragment("2024-06-12", 3)],
+      ["2024-06-13", table.replaceAll("2024-06-10", "2024-06-13")],
+      ["2024-06-14", fragment("2024-06-14", 4)],
+    ]);
+    const test = harness({ responses });
+
+    const summary = await runBackfill(baseOptions, test.deps);
+
+    expect(summary.repeated.map((entry) => entry.date)).toEqual(["2024-06-11", "2024-06-13"]);
+    expect(summary.archived).toHaveLength(3);
   });
 
   it("does not confuse two holidays with each other", async () => {
