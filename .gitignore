@@ -1,3 +1,8 @@
 node_modules/
 *.log
 .DS_Store
+
+# A half-written session, left only when a write was interrupted. It is renamed into
+# place on success, so anything still matching this is debris — and the workflow's
+# `git add data` would otherwise commit it as though it were part of the archive.
+data/**/*.tmp
