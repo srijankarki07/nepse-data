@@ -247,9 +247,14 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
    and all seven the source's. Re-running any range is cheap — archived days are skipped
    without a request — so a fresh sweep is a safe way to pick up anything the source adds
    for the gaps above.
-3. **Wire it into Bachat Khata.** Phase 2/3 of that project: the historical chart needs a
-   price-history store, which is what this repository is. The backend currently sources
-   prices from a community dataset instead.
+3. ~~Wire it into Bachat Khata.~~ **Started.** The backend has a
+   `NepseArchiveQuoteProvider` that reads `data/latest.json` and the two most recent
+   sessions, and it is now that project's default — the community mirror it replaces is
+   kept as the rollback. Verified against the live archive. Committed on
+   `feat/nepse-data-quotes` in the backend repository, **deliberately not pushed**: that
+   branch sits on an unpushed five-branch portfolio stack, so pushing it would publish all
+   five branches at once, and that is a decision about that project rather than a step in
+   this one.
 4. **Publish a query client** (Phase 4). Package the *query layer*, not the data: npm
    versions are immutable, so a data-carrying package would need republishing constantly.
    Bulk reads want GitHub Release assets, which jsDelivr does not serve.
