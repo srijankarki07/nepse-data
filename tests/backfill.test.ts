@@ -76,9 +76,25 @@ interface Harness {
  * `responses` maps a date to the fragment it returns, or to an `Error` to be thrown —
  * which is how a transient failure is simulated without a network.
  */
+/**
+ * Plausible content for a day that is already archived.
+ *
+ * The symbol carries the date so that two stubs never fingerprint alike — otherwise
+ * every "already on disk" day would look like a duplicate of every other, which is the
+ * kind of accident that makes a guard's tests pass for the wrong reason.
+ */
+function archivedStub(date: string): string {
+  return (
+    "date,symbol,open,high,low,close,volume,turnover\r\n" +
+    `${date},S${date.replaceAll("-", "")},1,1,1,1,1,1\r\n`
+  );
+}
+
 function harness(options: {
   responses: Map<string, string | Error>;
   archived?: readonly string[];
+  /** Days already on disk with specific content, for testing the duplicate guard. */
+  archivedContent?: Map<string, string>;
   writeFails?: boolean;
   log?: boolean;
 }): Harness {
@@ -87,7 +103,9 @@ function harness(options: {
   const sleeps: number[] = [];
   const logs: string[] = [];
 
-  const onDisk = new Set(options.archived ?? []);
+  const onDisk = new Map<string, string>();
+  for (const date of options.archived ?? []) onDisk.set(date, archivedStub(date));
+  for (const [date, content] of options.archivedContent ?? []) onDisk.set(date, content);
 
   const deps: BackfillDeps = {
     fetchDated: async (date) => {
@@ -97,11 +115,11 @@ function harness(options: {
       if (response instanceof Error) throw response;
       return response;
     },
-    isArchived: async (date) => onDisk.has(date),
+    readArchived: async (date) => onDisk.get(date) ?? null,
     write: async (snapshot) => {
       if (options.writeFails === true) throw new Error("ENOSPC");
       written.push(snapshot);
-      onDisk.add(snapshot.date);
+      onDisk.set(snapshot.date, snapshotToCsv(snapshot));
     },
     sleep: async (ms) => {
       sleeps.push(ms);
@@ -140,6 +158,29 @@ describe("runBackfill", () => {
     expect(summary.archived[0]).toEqual({ date: "2024-06-10", rows: 3 });
     // Byte-for-byte what the archive format says, not just "something was written".
     expect(snapshotToCsv(test.written[0] as DaySnapshot)).toContain("2024-06-10,S061000,");
+  });
+
+  it("catches a duplicate against a day already on disk, on a resumed sweep", async () => {
+    // The bug this exists for, found in the archive rather than in a test: the guard
+    // compared only against days fetched *in the same run*, so once a sweep resumed past
+    // the day that would have been the comparison, there was nothing to compare with.
+    // 2011-06-20 was written with 2011-06-19's prices because of exactly that.
+    const rows = [
+      { symbol: "S061100", open: 1, high: 2, low: 1, close: 2, volume: 3, turnover: 4 },
+    ];
+
+    const test = harness({
+      // 2011-06-19's role: already archived, so skipped, and never fetched this run.
+      archivedContent: new Map([["2024-06-10", snapshotToCsv({ date: "2024-06-10", rows })]]),
+      responses: new Map([["2024-06-11", fragment("2024-06-11", 1)]]),
+    });
+
+    const options: BackfillOptions = { ...baseOptions, from: "2024-06-10", to: "2024-06-11" };
+    const summary = await runBackfill(options, test.deps);
+
+    expect(summary.skipped).toEqual(["2024-06-10"]);
+    expect(summary.repeated).toEqual([{ date: "2024-06-11", matches: "2024-06-10" }]);
+    expect(test.written).toHaveLength(0);
   });
 
   it("never asks the network about a day already on disk", async () => {

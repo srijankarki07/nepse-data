@@ -21,12 +21,13 @@
  * ## The guard that needs two responses to work
  *
  * The response heading echoes the date that was asked for, so a single response cannot
- * show whether the site actually went and fetched that day or quietly re-served the
- * present with the requested date written on it. Comparing the *table* across days can:
- * two different dates returning byte-identical prices is not something that happens
- * legitimately, and it is the signature of exactly that failure. The digest is of the
- * table rather than of the whole response, because the heading differs by construction
- * and would make every day unique — detecting nothing.
+ * show whether the site actually went and fetched that day or quietly re-served another
+ * one with the requested date written on it. Comparing *content* across days can: two
+ * dates returning identical prices is not something that happens legitimately, and it is
+ * the signature of exactly that failure. The comparison drops the date column — the one
+ * field two files of the same session would differ by — which also makes a freshly
+ * parsed session and one read back off disk comparable, and that is what lets the guard
+ * survive a resumed sweep.
  *
  * ## Why a repeat refuses the day rather than stopping the sweep
  *
@@ -42,15 +43,9 @@
  * hours pointless.
  */
 
-import { createHash } from "node:crypto";
-
 import { eachDay } from "./lib/dates.js";
-import { extractTableById } from "./lib/html.js";
-import {
-  ImplausibleSessionError,
-  TABLE_ID,
-  parseBackfillDay,
-} from "./sources/sharesansar.js";
+import { sessionFingerprint, snapshotToCsv } from "./lib/serialize.js";
+import { ImplausibleSessionError, parseBackfillDay } from "./sources/sharesansar.js";
 import type { DaySnapshot } from "./types.js";
 
 /**
@@ -94,7 +89,15 @@ export interface BackfillOptions {
 /** Injected so the sweep can be tested without a network, a clock or a disk. */
 export interface BackfillDeps {
   fetchDated: (date: string) => Promise<string>;
-  isArchived: (date: string) => Promise<boolean>;
+  /**
+   * The session already on disk, or `null`.
+   *
+   * Returns the content rather than a boolean because the content is what the duplicate
+   * guard needs — see the note on `sessionFingerprint`. Asking only whether a file
+   * exists is what let a duplicate through: a resumed sweep skips the very day that
+   * would have been the comparison.
+   */
+  readArchived: (date: string) => Promise<string | null>;
   write: (snapshot: DaySnapshot) => Promise<void>;
   sleep: (ms: number) => Promise<void>;
   log: (line: string) => void;
@@ -181,20 +184,6 @@ function median(values: readonly number[]): number {
   return (lower + upper) / 2;
 }
 
-/**
- * A digest of the response's *table* alone, or `null` when there is no table.
- *
- * Deliberately not a digest of the whole response: the heading names the requested date,
- * so every day would differ by construction and the comparison would detect nothing.
- * See the note at the top of this file.
- */
-export function tableDigest(html: string): string | null {
-  const table = extractTableById(html, TABLE_ID);
-  if (table === null) return null;
-
-  return createHash("sha256").update(JSON.stringify(table)).digest("hex");
-}
-
 function toError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
@@ -212,8 +201,8 @@ export async function runBackfill(
   const days = eachDay(options.from, options.to);
   const accumulator = emptyAccumulator();
 
-  // Digest of a session's table, to the first date that produced it.
-  const digests = new Map<string, string>();
+  // Fingerprint of a session's content, to the first date known to have produced it.
+  const fingerprints = new Map<string, string>();
 
   let issued = 0;
   let consecutiveFailures = 0;
@@ -222,8 +211,15 @@ export async function runBackfill(
   for (const date of days) {
     // Cheapest and most valuable check first: no network, no delay, and it is what
     // makes a resumed run finish in seconds rather than hours.
-    if (await deps.isArchived(date)) {
+    //
+    // The content is read even though only its existence decides the branch, because a
+    // session already on disk is exactly what a later day may turn out to duplicate. A
+    // guard that skipped without remembering let 2011-06-20 through once: the sweep
+    // resumed past 2011-06-19, so nothing was left to compare 06-20 against.
+    const existing = await deps.readArchived(date);
+    if (existing !== null) {
       accumulator.skipped.push(date);
+      fingerprints.set(sessionFingerprint(existing), date);
       deps.log(`${date}  skipped     already on disk`);
       continue;
     }
@@ -275,31 +271,31 @@ export async function runBackfill(
       continue;
     }
 
-    // Digest of the table, not of the whole response — see the note at the top.
-    const digest = tableDigest(html);
-    if (digest !== null) {
-      const previous = digests.get(digest);
+    // The session's own content, which is the only thing two dates can be compared by —
+    // see the note on `sessionFingerprint`. Checked against everything on disk as well
+    // as everything fetched this run.
+    const fingerprint = sessionFingerprint(snapshotToCsv(snapshot));
+    const previous = fingerprints.get(fingerprint);
 
-      if (previous !== undefined && previous !== date) {
-        // Not written: the guard's whole purpose. The day is reported and stepped over.
-        consecutiveRepeats++;
-        accumulator.repeated.push({ date, matches: previous });
-        deps.log(`${date}  REPEATED    same table as ${previous}`);
+    if (previous !== undefined && previous !== date) {
+      // Not written: the guard's whole purpose. The day is reported and stepped over.
+      consecutiveRepeats++;
+      accumulator.repeated.push({ date, matches: previous });
+      deps.log(`${date}  REPEATED    same prices as ${previous}`);
 
-        if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
-          throw new Error(
-            `${consecutiveRepeats} days in a row returned a table already seen, most ` +
-              `recently ${date} matching ${previous}. One such day is a hole in the ` +
-              "source; a run of them means the endpoint is serving one session under " +
-              "many dates, so the sweep is stopping rather than trusting any of it.",
-          );
-        }
-        continue;
+      if (consecutiveRepeats >= MAX_CONSECUTIVE_REPEATS) {
+        throw new Error(
+          `${consecutiveRepeats} days in a row returned a session already seen, most ` +
+            `recently ${date} matching ${previous}. One such day is a hole in the ` +
+            "source; a run of them means the endpoint is serving one session under " +
+            "many dates, so the sweep is stopping rather than trusting any of it.",
+        );
       }
-
-      consecutiveRepeats = 0;
-      digests.set(digest, date);
+      continue;
     }
+
+    consecutiveRepeats = 0;
+    fingerprints.set(fingerprint, date);
 
     if (!options.dryRun) {
       try {
