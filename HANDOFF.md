@@ -27,14 +27,35 @@ workflow … without 'workflow' scope`, the token has lost the scope and needs
 
 | | |
 | --- | --- |
-| Repository | `github.com/srijankarki07/nepse-data` — **private, pushed, default branch `main`** |
-| Branches | `feat/backfill` merged to `main` with `--no-ff`; both on the remote |
+| Repository | `github.com/srijankarki07/nepse-data` — **private**, default branch `main` |
+| Branches | `feat/backfill` merged to `main` with `--no-ff` |
 | Blocked on | **nothing** |
-| Workflows | CI green on the merge; `Daily prices` and `Backfill history` both dispatched successfully |
-| Tests | 90 passing, typecheck clean |
-| Data files | 5 — `2026-09-30`, plus four days of `2024-06` from the first real backfill run |
+| Workflows | all three have run on a runner; the daily job is verified end to end |
+| Tests | **99** passing, typecheck clean |
+| Archive | **3,596 sessions**, 2011-01-01 → 2026-09-30, 38 MB, ~16 years |
+| Unresolved | **7 days** out of 5,752 — all source artifacts, listed below |
 
 ---
+
+## The seven days the archive does not have
+
+Every one is the source's doing, not a scraper fault, and re-running will not change any
+of them. They are listed here so nobody spends an afternoon rediscovering that.
+
+| Day | Why |
+| --- | --- |
+| 2011-01-03 | bundled — `ADBL` appears twice, two sessions in one response |
+| 2011-11-29 | bundled — `ADBL` |
+| 2012-10-01 | bundled — `ACEDBL` |
+| 2013-03-03 | bundled — `KBBL` |
+| 2014-03-13 | bundled — `ADBL` |
+| 2011-06-20 | served `2011-06-19`'s table under a `2011-06-20` heading |
+| 2016-09-04 | served `2016-09-03`'s table under a `2016-09-04` heading |
+
+The two failure modes are described in full under *Traps* below, and both are refused by
+design rather than resolved by a guess. Nothing here is worth working around: the honest
+position is that the source does not have those seven sessions, and the archive is more
+useful with a hole that is named than with a row that was invented.
 
 ## What works, and how it was verified
 
@@ -52,27 +73,35 @@ Everything below was checked by running it, not by reading it.
 
 ## What is *not* verified
 
-- **The full sweep has never been run.** Only 2024-06-10 → 14 and 2011-01-01 → 06 have.
-- **Whether one session token survives 105 minutes.** Re-auth on `419` is implemented and
-  tested against a fake, but not against a real expiry mid-sweep.
-- **Whether the site throttles a long sweep.** 5,750 requests from one address in two
-  hours is a plausible thing to rate-limit. Backoff on `429` exists; it has not been
-  provoked.
-- **How many days the source's bundling artifact affects.** See the trap below. One is
-  known (`2011-01-03`); whether it is a handful across the range or concentrated in early
-  2011 is unknown until a sweep runs.
-- **Never run on a non-trading day in the daily job** — the no-op follows from the source
-  reporting the previous session, and idempotency was verified, but not across a real
-  holiday.
+- **Never run on a non-trading day in the daily job.** The no-op follows from the source
+  reporting the previous session, and idempotency was verified — but not across a real
+  holiday, because the archive has not yet been left alone for one.
+- **The archive has not yet grown on its own.** The daily workflow has been dispatched by
+  hand and worked; nothing has yet been committed by the *schedule*. Leave it a week and
+  check the archive grew by the right number of sessions.
+- **No adjustment for bonus shares, rights or splits**, deliberately. See the README.
 
-### Now verified, having not been before
+The two things this section previously worried about — whether a runner can reach the
+site, and whether a token survives a two-hour sweep — both have answers now: yes, and
+yes. The full sweep ran to completion with **no re-authentication and no rate limiting**,
+which is the strongest evidence available short of leaving it running for months.
+
+### Verified by running it, not by reading it
 
 | Claim | How |
 | --- | --- |
-| CI runs | Green on the merge to `main`, 21 s |
-| **A GitHub runner can reach ShareSansar** | The daily workflow ran on a runner: 90 tests passed, 352 scrips fetched, *"Unchanged — already archived"* |
-| The dated route works from a runner | A 5-day dispatch over 2011-01-01 → 06 fetched real sessions through the CSRF/cookie path |
-| The daily job is a no-op when the session is archived | The same dispatch found nothing to commit and exited 0 |
+| The whole archive is this scraper's output | 3,596 sessions, 2011 → 2026, no import from anywhere |
+| **No two sessions hold identical prices** | Checked across all 3,596 files; see `tests/archive.test.ts` |
+| No file's rows disagree with its own filename | Same check |
+| A long sweep completes on a runner | 5,752 days, ~105 minutes, one job, no re-auth |
+| The data reflects reality, not just the scraper | Two documented closures reproduced independently — see below |
+| The daily job is a no-op when the session is archived | Dispatched by hand: 352 scrips fetched, *"Unchanged — already archived"* |
+
+**The closures are the best check available.** The per-year counts were not tuned to
+anything; they fell out of the source. And the archive independently reproduces the
+Gorkha earthquake (May 2015: 6 sessions against ~20 in every neighbouring month) and the
+COVID halt (April 2020: zero, with March cut short). A scraper inventing or mis-dating
+data would not agree with history twice at month resolution.
 
 ---
 
@@ -201,13 +230,13 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 
 ## Roadmap
 
-1. **Let the schedule prove itself.** The daily job has been dispatched by hand and
-   worked; leave it a week and confirm the archive grew by the right number of sessions.
-2. **Run the real sweep**, in this order: a narrow unarchived range first (2011-01-01 →
-   06 has been done and works), then 2011 alone, then the full `2011-01-01 → today`.
-   Watch the per-year report on the first real year before committing to the rest —
-   its minimum is the evidence for whether `--min-rows 3` is right, and 2011-01-03
-   shows the kind of day that will come back as failed.
+1. **Let the schedule prove itself.** The sweep is done and the daily job has been
+   dispatched by hand, but nothing has yet been committed by the *timer*. Leave it a week
+   and confirm the archive grew by the right number of sessions.
+2. ~~Run the real sweep.~~ Done: 5,752 days, 3,596 sessions, 38 MB, seven days unresolved
+   and all seven the source's. Re-running any range is cheap — archived days are skipped
+   without a request — so a fresh sweep is a safe way to pick up anything the source adds
+   for the gaps above.
 3. **Wire it into Bachat Khata.** Phase 2/3 of that project: the historical chart needs a
    price-history store, which is what this repository is. The backend currently sources
    prices from a community dataset instead.
@@ -226,7 +255,7 @@ Worth doing both runs together, because they exercise the same seam.
 | --- | --- | --- |
 | `backend` | `docs/portfolio-reference` | 5 stacked local commits. `test:cov` green, 1000 tests |
 | `bachat-khata` | `35-feat-portfolio` | 1 local commit. 168 tests, build green |
-| `nepse-data` | `main` | This repository. Merged and pushed; CI green; 90 tests |
+| `nepse-data` | `main` | This repository. 3,596 sessions backfilled 2011 → today; 99 tests |
 
 The backend's `docs/features/portfolio.md` has a **"Trying it against a real statement"**
 runbook — the sequence for the first live run, what each step should show, and the two
