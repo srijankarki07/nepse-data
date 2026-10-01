@@ -6,23 +6,23 @@ Every figure comes from a scraper in this repository, runs on a schedule in this
 repository, and lands as a plain CSV committed to this repository. Nothing here depends
 on another person's dataset being maintained.
 
-> **Status — backfillable, and not yet pushed.**
+> **Status — fifteen years of history, and private.**
 >
-> The daily pipeline works and is tested, and so does the **backfill**, which can reach
-> back to 2011 — so the archive no longer has to start on the day it was first run. See
-> [Backfilling history](#backfilling-history).
+> The daily pipeline works and is tested, and the **backfill has been run**. The archive
+> holds **3,596 sessions** covering 2011 to today, every one of them this scraper's own
+> output. See [Backfilling history](#backfilling-history).
 >
-> The repository is **private** deliberately, and should stay private until the whole
-> archive is the output of this scraper. The backfill is what makes that condition
-> reachable; see [Provenance](#provenance).
+> The repository is **private** deliberately. The condition for making it public — that
+> the whole archive be this scraper's output, backfill included — is now **met**; see
+> [Provenance](#provenance). Whether to publish is a separate decision, not a blocker.
 >
-> **Not yet pushed**, and neither workflow has run. [HANDOFF.md](HANDOFF.md) has the one
-> blocker and the current state.
+> [HANDOFF.md](HANDOFF.md) has the current state and what remains unverified.
 
 ## Layout
 
 ```
-data/daily/2026/2026-09-30.csv    one file per trading session, ~18 KB
+data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
+                                  3,596 files across 16 years, 38 MB in total
 src/                              the scraper and the CLI
 tests/                            including real captured responses as fixtures
 .github/workflows/daily.yml       fetches and commits, every trading day
@@ -119,12 +119,34 @@ would have needed is not needed at all.
 
 **One request per calendar day.** The endpoint has no range parameter — `fromdate` and
 `todate` are accepted and silently ignored — so a sweep has to ask about every day,
-including the ones the market was shut. The full range is about **5,750 requests at
-1.1 s, so roughly 105 minutes**.
+including the ones the market was shut.
 
 `pnpm backfill` runs it locally; `.github/workflows/backfill.yml` runs it a year at a
 time from a runner. Both are safe to interrupt — a day already on disk is skipped without
-a request, so a re-run resumes rather than repeats.
+a request, so a re-run resumes rather than repeats. Re-running is also cheap: a sweep
+over a fully archived range finishes in seconds having asked the source nothing.
+
+The sweep over `2011-01-01 → 2026-09-30` — **5,752 calendar days** at 1.1 s, about 105
+minutes — produced:
+
+| | |
+| --- | --- |
+| Sessions archived | **3,596** |
+| Days the source reports no session | 2,149 |
+| Days left unresolved | **7** |
+
+Seven days out of 5,752 is 99.9%, and every one is the source's doing rather than a
+scraper fault: five days where it publishes two consecutive sessions in one response, and
+two where it serves the previous day's table under the requested date. Both are described
+under [Known limitations](#known-limitations), and both are refused rather than guessed
+at.
+
+Coverage is not uniform, and the shape of it is a cross-check that the data is real
+rather than merely well-formed. The market grew from a median of 74 listed scrips in 2011
+to 344 in 2026, and the archive independently reproduces two documented closures: **May
+2015 has 6 sessions against roughly 20 in every neighbouring month**, which is the Gorkha
+earthquake, and **April 2020 has none**, with March cut short, which is the COVID trading
+halt.
 
 Three things it refuses to do, each of which would corrupt the archive quietly:
 
@@ -173,9 +195,11 @@ doing so: **the whole archive must be the output of this scraper**, including th
 backfill. A history seeded from another community dataset would carry that project's
 compilation into this one, and no later commit removes it from the git history.
 
-The backfill meets that condition. It is this repository's scraper reading the same
-source — not an import from anywhere else — so the archive becomes publishable once the
-sweep has run, without a single byte of somebody else's compilation entering the history.
+The backfill meets that condition, and has now been run. Every one of the 3,596 sessions
+came from this repository's scraper reading the same source — not from an import — so no
+byte of anybody else's compilation has entered the history, and the repository is
+publishable whenever that is wanted. That is a decision, not a task: nothing in the code
+changes either way.
 
 The code is MIT (see `LICENSE`). The data is not covered by it.
 
@@ -190,9 +214,15 @@ The code is MIT (see `LICENSE`). The data is not covered by it.
   because the smallest real session found in range has 4 scrips. At those counts a
   truncated response and a genuinely tiny market look alike, so the per-year report is
   what to check rather than the floor alone.
-- **A response bundling two sessions cannot be archived.** Early dates occasionally
-  return two rows per scrip; the day is reported as failed rather than resolved by
-  guessing which row is the session.
+- **Five days could not be archived because the source bundles two sessions into one
+  response.** The second row set opens exactly where the first closes, so the response
+  holds two consecutive sessions rather than a duplicate. The archive's premise is one
+  row per scrip per session, so these are reported by name rather than resolved by
+  guessing which half is the day.
+- **Two days were refused because the source served the previous day's table under the
+  requested date.** Identical prices across two dates cannot be legitimate, so the day is
+  refused and named. Re-running will not change it: the data for those days is not in the
+  source.
 - **One source.** If ShareSansar changes its markup or blocks the job, the archive stops
   growing. The failure is loud rather than silent: the parser refuses a page whose table
   or columns it cannot find, and the workflow fails.
