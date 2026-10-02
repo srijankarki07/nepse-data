@@ -32,7 +32,7 @@
  * wrong. Only names are read, never contents, so it stays cheap as the archive grows.
  */
 
-import { readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isRealDay } from "./dates.js";
@@ -57,6 +57,29 @@ export interface ArchiveManifest {
   /** Sessions per year, keyed by year. Sorted, so the file's diff is stable. */
   years: Record<string, number>;
 }
+
+/**
+ * The list of every session date, as its own file.
+ *
+ * **Separate from the manifest on purpose.** The manifest is the hot path — a client
+ * reads it before anything else and it is three hundred bytes — while this is three
+ * thousand-odd dates and grows every day. Folding the dates into the manifest would make
+ * every "what is the latest price" into a fifty-kilobyte download to answer a question
+ * that needed a date.
+ *
+ * It exists because the manifest says *how many* sessions there are and *when the newest
+ * is*, but not *which days traded*. Without that, a consumer asking for a date range has
+ * to walk calendar days and probe for each one — about 365 requests to find 240 sessions,
+ * with a third of them spent discovering that the market was shut. A date list turns that
+ * into one request plus one per session, which is the whole difference between a range
+ * query being practical and being wasteful.
+ *
+ * Note what it is *not*: it is not a prediction of which days trade. It records what the
+ * archive actually holds, which is the only reliable source — the trading week has
+ * changed once already within this archive's lifetime.
+ */
+export const SESSIONS_FILE = "sessions.json";
+export const SESSIONS_PATH = `data/${SESSIONS_FILE}`;
 
 /** Every archived session date, sorted ascending. Named by its filename. */
 export async function archivedDates(root: string): Promise<string[]> {
@@ -121,11 +144,35 @@ export async function buildManifest(root: string): Promise<ArchiveManifest> {
 export async function writeManifest(root: string): Promise<ArchiveManifest> {
   const manifest = await buildManifest(root);
 
-  await writeFile(
-    path.join(root, MANIFEST_PATH),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf8",
-  );
+  const target = path.join(root, MANIFEST_PATH);
+  // `data/` normally exists — it is where the archive lives — but a writer that needs its
+  // output directory to pre-exist fails on the empty case for no good reason.
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 
   return manifest;
+}
+
+/**
+ * Rebuilds and writes the list of every session date, returning what was written.
+ *
+ * A flat array rather than an object: the dates *are* the content, and a wrapper key
+ * would be three thousand files' worth of bytes describing itself. It is compact JSON,
+ * one date per line, which keeps the file readable in a diff while staying small — a
+ * session is added once a day, so the daily change is one line.
+ */
+export async function writeSessionsIndex(root: string): Promise<string[]> {
+  const dates = await archivedDates(root);
+
+  // One date per line rather than compact JSON. The file is rewritten in full on every
+  // run, so the only question is what its diff looks like — and with a date per line a
+  // new session is exactly one added line, which is legible in a review. Compact would
+  // make every day's change look like the whole file changed.
+  const body = dates.map((date) => `  ${JSON.stringify(date)}`).join(",\n");
+
+  const target = path.join(root, SESSIONS_PATH);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `[\n${body}\n]\n`, "utf8");
+
+  return dates;
 }

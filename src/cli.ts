@@ -34,7 +34,7 @@ import {
 } from "./backfill.js";
 import { archivedCsv, writeSnapshot } from "./lib/archive.js";
 import { isRealDay, kathmanduToday, previousDay } from "./lib/dates.js";
-import { MANIFEST_PATH, writeManifest } from "./lib/manifest.js";
+import { MANIFEST_PATH, SESSIONS_PATH, writeManifest, writeSessionsIndex } from "./lib/manifest.js";
 import { snapshotPath } from "./lib/paths.js";
 import { snapshotToCsv } from "./lib/serialize.js";
 import { MIN_HISTORICAL_ROWS, fetchTodaySharePrice } from "./sources/sharesansar.js";
@@ -105,7 +105,11 @@ async function scrapeCommand(dryRun: boolean): Promise<number> {
   // day this writes identical bytes and the job still finds nothing to commit — which is
   // what makes a holiday a no-op. See the note in `lib/manifest.ts` about timestamps.
   const manifest = await writeManifest(REPO_ROOT);
-  console.log(`Index   ${MANIFEST_PATH} — latest ${manifest.latest ?? "none"}`);
+  const dates = await writeSessionsIndex(REPO_ROOT);
+  console.log(
+    `Index   ${MANIFEST_PATH} + ${SESSIONS_PATH} — latest ${manifest.latest ?? "none"}, ` +
+      `${dates.length} session dates`,
+  );
 
   if (outcome === "unchanged") {
     // The ordinary case on a re-run, a retry, and every holiday: the session the source
@@ -238,10 +242,11 @@ async function backfillCommand(argv: readonly string[]): Promise<number> {
 
   if (!options.dryRun) {
     const manifest = await writeManifest(REPO_ROOT);
+    const dates = await writeSessionsIndex(REPO_ROOT);
     console.log("");
     console.log(
-      `Index   ${MANIFEST_PATH} — ${manifest.sessions} sessions, ` +
-        `latest ${manifest.latest ?? "none"}`,
+      `Index   ${MANIFEST_PATH} + ${SESSIONS_PATH} — ${manifest.sessions} sessions, ` +
+        `${dates.length} dates, latest ${manifest.latest ?? "none"}`,
     );
   }
 

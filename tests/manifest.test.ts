@@ -12,7 +12,13 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { MANIFEST_PATH, buildManifest, writeManifest } from "../src/lib/manifest.js";
+import {
+  MANIFEST_PATH,
+  SESSIONS_PATH,
+  buildManifest,
+  writeManifest,
+  writeSessionsIndex,
+} from "../src/lib/manifest.js";
 
 let root: string;
 
@@ -130,5 +136,70 @@ describe("writeManifest", () => {
     await writeManifest(root);
 
     expect(readFileSync(path.join(root, MANIFEST_PATH), "utf8").endsWith("\n")).toBe(true);
+  });
+});
+
+describe("writeSessionsIndex", () => {
+  it("lists every session date, ascending", async () => {
+    session("2026-09-30");
+    session("2011-01-02");
+    session("2026-09-29");
+
+    await writeSessionsIndex(root);
+
+    const written = JSON.parse(readFileSync(path.join(root, SESSIONS_PATH), "utf8"));
+    expect(written).toEqual(["2011-01-02", "2026-09-29", "2026-09-30"]);
+  });
+
+  it("is a flat array, not an object wrapping one", async () => {
+    // The dates are the content. A wrapper key would be bytes describing itself.
+    session("2026-09-30");
+    await writeSessionsIndex(root);
+
+    expect(JSON.parse(readFileSync(path.join(root, SESSIONS_PATH), "utf8"))).toBeInstanceOf(Array);
+  });
+
+  it("puts one date per line, so a new session is a one-line diff", async () => {
+    // The file is rewritten in full every run. Compact JSON would make every day's change
+    // look like the whole file changed, which is the opposite of what a review needs.
+    session("2026-09-29");
+    session("2026-09-30");
+    await writeSessionsIndex(root);
+
+    const text = readFileSync(path.join(root, SESSIONS_PATH), "utf8");
+    const lines = text.trim().split("\n");
+
+    expect(lines).toHaveLength(4); // [, two dates, ]
+    expect(lines[0]).toBe("[");
+    expect(lines[1]).toBe('  "2026-09-29",');
+    expect(lines[2]).toBe('  "2026-09-30"');
+    expect(lines[3]).toBe("]");
+  });
+
+  it("is byte-identical when nothing changed", async () => {
+    // The same property the manifest has, and for the same reason: the daily job compares
+    // before committing, and a file that differed every run would defeat it.
+    session("2026-09-30");
+
+    await writeSessionsIndex(root);
+    const first = readFileSync(path.join(root, SESSIONS_PATH), "utf8");
+    await writeSessionsIndex(root);
+    const second = readFileSync(path.join(root, SESSIONS_PATH), "utf8");
+
+    expect(second).toBe(first);
+  });
+
+  it("writes an empty list for an empty archive rather than failing", async () => {
+    await writeSessionsIndex(root);
+    expect(JSON.parse(readFileSync(path.join(root, SESSIONS_PATH), "utf8"))).toEqual([]);
+  });
+
+  it("ignores a file whose name is not a session date", async () => {
+    session("2026-09-30");
+    writeFileSync(path.join(root, "data", "daily", "2026", "notes.csv"), "x\r\n");
+
+    await writeSessionsIndex(root);
+
+    expect(JSON.parse(readFileSync(path.join(root, SESSIONS_PATH), "utf8"))).toEqual(["2026-09-30"]);
   });
 });
