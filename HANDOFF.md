@@ -31,10 +31,10 @@ workflow … without 'workflow' scope`, the token has lost the scope and needs
 | Branches | `feat/backfill` merged to `main` with `--no-ff` |
 | Blocked on | **nothing** |
 | Workflows | all three have run on a runner; the daily job is verified end to end |
-| Tests | **108** passing, typecheck clean |
-| Archive | **3,596 sessions**, 2011-01-01 → 2026-09-30, 38 MB, ~16 years |
+| Tests | **136** passing, typecheck clean |
+| Archive | **3,600 sessions**, 2011-01-02 → 2026-10-02, 38 MB, ~16 years |
 | Index | `data/latest.json`, latest and previous session, worth reading first |
-| Unresolved | **7 days** out of 5,752, all source artifacts, listed below |
+| Unresolved | **5 days** out of 5,752, all source artifacts, listed below |
 
 **Public is recent.** The repository was private for its whole life up to this point
 because publishing these figures is redistribution, and the reasoning is kept in the
@@ -44,25 +44,29 @@ judgement is revisited, the README is where the argument lives.
 
 ---
 
-## The seven days the archive does not have
+## The five days the archive does not have
 
 Every one is the source's doing, not a scraper fault, and re-running will not change any
 of them. They are listed here so nobody spends an afternoon rediscovering that.
 
 | Day | Why |
 | --- | --- |
-| 2011-01-03 | bundled: `ADBL` appears twice, two sessions in one response |
-| 2011-11-29 | bundled, `ADBL` |
-| 2012-10-01 | bundled, `ACEDBL` |
-| 2013-03-03 | bundled, `KBBL` |
-| 2014-03-13 | bundled, `ADBL` |
+| 2011-01-03 | two sessions interleaved — 5 scrips listed twice, the second row opening where the first closed — and the second half contradicts what the source says for `2011-01-04` directly |
+| 2013-03-03 | `KBBL` listed twice, differing in every column |
+| 2014-03-13 | `BBBL` listed twice, differing only in Open (124 against 149), and absent from every neighbouring session, so nothing can arbitrate |
 | 2011-06-20 | served `2011-06-19`'s table under a `2011-06-20` heading |
 | 2016-09-04 | served `2016-09-03`'s table under a `2016-09-04` heading |
 
-The two failure modes are described in full under *Traps* below, and both are refused by
-design rather than resolved by a guess. Nothing here is worth working around: the honest
-position is that the source does not have those seven sessions, and the archive is more
-useful with a hole that is named than with a row that was invented.
+Two days were listed here until recently — `2012-10-01` and `2011-11-29` — and are now
+archived. The source listed their scrips more than once, but with *identical* figures, so
+collapsing the repeats to one row loses nothing and recovers the session. That is the only
+class of repeat that is recoverable, and it was worth recovering: `2012-10-01` is a whole
+91-scrip session.
+
+The failure modes are described in full under *Traps* below, and all are refused by design
+rather than resolved by a guess. Nothing here is worth working around: the honest position
+is that the source does not have those five sessions, and the archive is more useful with a
+hole that is named than with a row that was invented.
 
 ## What works, and how it was verified
 
@@ -77,15 +81,23 @@ Everything below was checked by running it, not by reading it.
 | A holiday is not an error | The real closed-day capture returns `null`, and only when the page says `No Record Found.` |
 | Truncation is not mistaken for a holiday | A test feeds a zero-row response with no evidence and **asserts it throws** |
 | The refusals work | Tests cover a missing date, a moved table, a renamed column, a duplicated scrip, a partial page, a contradicted count, a wrong-date response, and two dates returning identical prices |
+| An identical repeat is collapsed, not swallowed | `2012-10-01` archived 91 scrips with 91 duplicates dropped, reported in the log and the summary; today's page still throws on the same input |
+| A *differing* repeat is still refused | `2013-03-03` and `2014-03-13` still fail the day, by name |
 
 ## What is *not* verified
 
 - **Never run on a non-trading day in the daily job.** The no-op follows from the source
   reporting the previous session, and idempotency was verified, but not across a real
   holiday, because the archive has not yet been left alone for one.
-- **The archive has not yet grown on its own.** The daily workflow has been dispatched by
-  hand and worked; nothing has yet been committed by the *schedule*. Leave it a week and
-  check the archive grew by the right number of sessions.
+- **The daily schedule is not punctual, and cannot be relied on.** It has fired exactly
+  once: `2026-10-01`, committed by `github-actions[bot]` at **17:00:56Z — 6h45m after its
+  10:15Z slot**. On `2026-10-02` it did not fire at all, and the session was committed only
+  because the workflow was dispatched by hand. GitHub *queues* `schedule` events rather than
+  firing them on time, and once load is high enough it drops them, leaving nothing on the
+  Actions page to show for it. The data is not at risk — a late run archives the same bytes,
+  because a session's figures are frozen after the close — but "every day at 16:00 Kathmandu"
+  is a description, not a guarantee. If a day must never pass without an attempt, the
+  schedule needs an external trigger.
 - **No adjustment for bonus shares, rights or splits**, deliberately. See the README.
 
 The two things this section previously worried about, whether a runner can reach the
@@ -97,8 +109,8 @@ which is the strongest evidence available short of leaving it running for months
 
 | Claim | How |
 | --- | --- |
-| The whole archive is this scraper's output | 3,596 sessions, 2011 → 2026, no import from anywhere |
-| **No two sessions hold identical prices** | Checked across all 3,596 files; see `tests/archive.test.ts` |
+| The whole archive is this scraper's output | 3,600 sessions, 2011 → 2026, no import from anywhere |
+| **No two sessions hold identical prices** | Checked across all 3,600 files; see `tests/archive.test.ts` |
 | No file's rows disagree with its own filename | Same check |
 | A long sweep completes on a runner | 5,752 days, ~105 minutes, one job, no re-auth |
 | The data reflects reality, not just the scraper | Two documented closures reproduced independently; see below |
@@ -128,17 +140,42 @@ only accepted on the page's own evidence (`No Record Found.` or a stated count o
 as `Comp\w*`; matching only the correct spelling would mean the evidence silently stopped
 being found the day the typo is fixed.
 
-**The source sometimes bundles two sessions into one response.** `2011-01-03` returns
-every scrip twice, and the second row opens exactly where the first closed, so it is two
-consecutive sessions, not a duplicated row. The parser refuses duplicate scrips by design
-(that guard is what catches a genuinely malformed table), so such a day is reported as
-**failed**, with the reason, rather than resolved by guessing which row is the session.
-Expect a handful of these; they are the source's, and re-running will not fix them.
+**The source sometimes lists a scrip more than once in one response — in three different
+ways.** Measured by fetching every affected day, not inferred from one of them:
+
+  - **Identical repeats.** `2012-10-01` lists all 91 of its scrips twice with the same
+    figures; `2011-11-29` lists ADBL three times. There is nothing to choose between the
+    copies, so on the dated route the parser **collapses** them to one row, counts them and
+    reports the day. Both days are now archived. This is the only class that was ever
+    recoverable, and it was worth recovering: 2012-10-01 is a whole 91-scrip session.
+  - **Two sessions interleaved.** `2011-01-03` returns 5 scrips twice, the second row
+    opening exactly where the first closed, so the response really does carry two
+    consecutive sessions. It is still **refused**, deliberately: its second half contradicts
+    what the same source says for `2011-01-04` when asked directly — it claims a close of
+    131 and a high of 131, where the real session closed at 139 with a high of 139.
+    Splitting it would archive a session known to be wrong.
+  - **One row, two conflicting claims.** `2013-03-03` (`KBBL`, differing in every column)
+    and `2014-03-13` (`BBBL`, differing only in Open — 124 against 149). Refused, because
+    nothing on disk can arbitrate: `BBBL` appears in no neighbouring session at all.
+
+An earlier version of this note claimed the doubling was always two consecutive sessions.
+That is true of exactly one of the five days, and it is the one that must not be split.
+
+The collapse is opted into by the dated route alone — today's page still refuses a repeated
+scrip outright, so a malformed daily response fails the run rather than being accepted
+quietly on the job nobody watches. A repeat whose values *differ* is refused on both routes.
 
 **The source also serves the previous session for days it has no data for.** `2011-06-20`
 returns `2011-06-19`'s table byte-for-byte under a `2011-06-20` heading, same 61 scrips,
 same prices. Only the heading is different, which is why a single response cannot detect
 it and why the sweep digests the *table*. Such a day is refused by name, not written.
+
+**A one-day sweep cannot see that guard at all.** It compares against days it has read, and
+it reads only the days inside the requested range — so `--from 2016-09-04 --to 2016-09-04`
+starts with nothing to compare against and *archives* the previous session under the wrong
+date. Include the preceding session: `--from 2016-09-03 --to 2016-09-04` refuses it
+correctly. This matters for re-running a single day by hand, which is the obvious thing to
+do when one is missing.
 
 The first version of this guard aborted the whole sweep on the first repeat, and a 2011
 run stopped dead at 2011-06-20 having archived 103 sessions, losing July to December to
@@ -267,7 +304,7 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 1. **Let the schedule prove itself.** The sweep is done and the daily job has been
    dispatched by hand, but nothing has yet been committed by the *timer*. Leave it a week
    and confirm the archive grew by the right number of sessions.
-2. ~~Run the real sweep.~~ Done: 5,752 days, 3,596 sessions, 38 MB, seven days unresolved
+2. ~~Run the real sweep.~~ Done: 5,752 days, 3,600 sessions, 38 MB, five days unresolved
    and all seven the source's. Re-running any range is cheap, archived days are skipped
    without a request, so a fresh sweep is a safe way to pick up anything the source adds
    for the gaps above.
@@ -294,7 +331,7 @@ Worth doing both runs together, because they exercise the same seam.
 | --- | --- | --- |
 | `backend` | `docs/portfolio-reference` | 5 stacked local commits. `test:cov` green, 1000 tests |
 | `bachat-khata` | `35-feat-portfolio` | 1 local commit. 168 tests, build green |
-| `nepse-data` | `main` | This repository. 3,596 sessions backfilled 2011 → today; 99 tests |
+| `nepse-data` | `main` | This repository. 3,600 sessions backfilled 2011 → today; 136 tests |
 
 The backend's `docs/features/portfolio.md` has a **"Trying it against a real statement"**
 runbook, the sequence for the first live run, what each step should show, and the two

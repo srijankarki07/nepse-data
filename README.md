@@ -9,7 +9,7 @@ on another person's dataset being maintained.
 > **Status: fifteen years of history, published.**
 >
 > The daily pipeline works and is tested, and the **backfill has been run**. The archive
-> holds **3,596 sessions** covering 2011 to today, every one of them this scraper's own
+> holds **3,600 sessions** covering 2011 to today, every one of them this scraper's own
 > output. See [Backfilling history](#backfilling-history).
 >
 > This repository is **public**. That was a decision rather than a default: a published
@@ -23,7 +23,7 @@ on another person's dataset being maintained.
 ```
 data/latest.json                  the index. Read this first
 data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
-                                  3,596 files across 16 years, 38 MB in total
+                                  3,600 files across 16 years, 38 MB in total
 src/                              the scraper and the CLI
 tests/                            including real captured responses as fixtures
 .github/workflows/daily.yml       fetches and commits, every trading day
@@ -174,7 +174,7 @@ minutes) produced:
 
 | | |
 | --- | --- |
-| Sessions archived | **3,596** |
+| Sessions archived | **3,600** |
 | Days the source reports no session | 2,149 |
 | Days left unresolved | **7** |
 
@@ -215,11 +215,14 @@ three scrips, some *trading* days are absent entirely, and early 2011 only reach
 scrips by November. Gaps in the early archive are the source's, not the scraper's, and
 the sweep reports each day's outcome so the two cannot be confused.
 
-One artifact is worth knowing about: **the source occasionally bundles two consecutive
-sessions into one response.** `2011-01-03` returns every scrip twice, and the second row
-opens exactly where the first closed, so it is two sessions, not a duplicate. The
-archive's premise is one row per scrip per session, so such a day is reported as failed
-rather than guessed at, and it is listed with its reason at the end of a sweep.
+One artifact is worth knowing about: **the source sometimes lists a scrip more than once in
+one response**, in three different ways, and only one of them is recoverable. Where the
+repeats carry identical figures — `2012-10-01` lists all 91 of its scrips twice — they are
+collapsed to a single row and the day is archived. Where the response instead holds two
+consecutive sessions interleaved (`2011-01-03`, whose second row opens exactly where the
+first closed), or two rows that disagree about one session (`2013-03-03`, `2014-03-13`),
+the day is reported as failed rather than guessed at, and listed with its reason at the end
+of a sweep. HANDOFF.md sets out which is which, and why.
 
 ## Provenance
 
@@ -234,7 +237,7 @@ NEPSE's data is NEPSE's, and ShareSansar publishes it under terms that permit re
 rather than republishing. Private removed the question entirely.
 
 What made publishing available is the condition this repository set for itself: **the
-whole archive is this scraper's output.** All 3,596 sessions came from the code here
+whole archive is this scraper's output.** All 3,600 sessions came from the code here
 reading the same source, and none was imported, so no other project's compilation is
 carried in the history, and no later commit could have removed it if one had been.
 
@@ -254,11 +257,13 @@ The code is MIT (see `LICENSE`). The data is not covered by it.
   because the smallest real session found in range has 4 scrips. At those counts a
   truncated response and a genuinely tiny market look alike, so the per-year report is
   what to check rather than the floor alone.
-- **Five days could not be archived because the source bundles two sessions into one
-  response.** The second row set opens exactly where the first closes, so the response
-  holds two consecutive sessions rather than a duplicate. The archive's premise is one
-  row per scrip per session, so these are reported by name rather than resolved by
-  guessing which half is the day.
+- **Five days could not be archived, and none of them can be.** Three contain a scrip
+  listed twice with *differing* figures — either two consecutive sessions interleaved, or
+  two rows making conflicting claims about one session — where choosing between them would
+  be a guess. The archive's premise is one row per scrip per session, so these are reported
+  by name rather than resolved. Two further days that were once listed here
+  (`2012-10-01`, `2011-11-29`) have since been recovered: their repeats carried identical
+  figures, so collapsing them loses nothing.
 - **Two days were refused because the source served the previous day's table under the
   requested date.** Identical prices across two dates cannot be legitimate, so the day is
   refused and named. Re-running will not change it: the data for those days is not in the
