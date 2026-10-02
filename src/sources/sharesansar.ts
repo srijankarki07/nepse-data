@@ -135,6 +135,27 @@ export function parseNumber(raw: string): number | null {
 }
 
 /**
+ * The fields a session stores, in one list so row equality cannot silently miss one when
+ * the schema grows.
+ */
+const ROW_FIELDS = ["symbol", "open", "high", "low", "close", "volume", "turnover"] as const;
+
+/**
+ * Whether two parsed rows are the same observation.
+ *
+ * Compared on the parsed values rather than the source's cell text, because the two differ
+ * in ways that are not disagreements: `"1,234.50"` and `"1234.5"` are the same number, and
+ * `"-"` and an empty cell are both an absent one. Comparing the raw cells would read those
+ * as a conflict and refuse a day whose repeats are in fact identical.
+ *
+ * `null` is a value here — two absent fields are the same absence — and `parseNumber` never
+ * returns `NaN`, so `===` is exact.
+ */
+function sameRow(a: QuoteRow, b: QuoteRow): boolean {
+  return ROW_FIELDS.every((field) => a[field] === b[field]);
+}
+
+/**
  * The session the page is showing, from its "As of" heading.
  *
  * Returns `null` when it is absent, which is a refusal rather than a fallback: a
@@ -225,7 +246,9 @@ export class ImplausibleSessionError extends Error {
 }
 
 /** The two legitimate endings of reading the table, and nothing else. */
-type FragmentOutcome = { kind: "session"; snapshot: DaySnapshot } | { kind: "empty" };
+type FragmentOutcome =
+  | { kind: "session"; snapshot: DaySnapshot; collapsedDuplicates: number }
+  | { kind: "empty" };
 
 interface FragmentOptions {
   /** Below this many rows the response is not believed. */
@@ -247,6 +270,19 @@ interface FragmentOptions {
    * under a historical date.
    */
   expectDate?: string;
+  /**
+   * Whether a repeated scrip carrying the same values as the row already read may be
+   * collapsed to one.
+   *
+   * Off for today's page, where a repeated scrip means the response is malformed and the
+   * run should fail rather than wave it through. On for the dated route, where the source
+   * genuinely re-lists some scrips on historical days — measured on 2012-10-01, where every
+   * scrip appears twice — and refusing costs the whole session.
+   *
+   * A repeat whose values *differ* is two conflicting claims about one session, and is
+   * refused on either route.
+   */
+  collapseIdenticalDuplicates?: boolean;
 }
 
 /**
@@ -286,20 +322,14 @@ function parseFragment(html: string, options: FragmentOptions): FragmentOutcome 
 
   const columns = resolveColumns(header);
   const rows: QuoteRow[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, QuoteRow>();
+  let collapsedDuplicates = 0;
 
   for (const cells of body) {
     const symbol = (cells[columns.symbol] ?? "").trim().toUpperCase();
     if (symbol === "") continue;
 
-    // One row per scrip per session is the premise of the whole archive. A duplicate
-    // means the source changed shape, and silently keeping the last one would hide it.
-    if (seen.has(symbol)) {
-      throw new Error(`"${symbol}" appears twice in one session's table.`);
-    }
-    seen.add(symbol);
-
-    rows.push({
+    const parsed: QuoteRow = {
       symbol,
       open: parseNumber(cells[columns.open] ?? ""),
       high: parseNumber(cells[columns.high] ?? ""),
@@ -307,7 +337,27 @@ function parseFragment(html: string, options: FragmentOptions): FragmentOutcome 
       close: parseNumber(cells[columns.close] ?? ""),
       volume: parseNumber(cells[columns.volume] ?? ""),
       turnover: parseNumber(cells[columns.turnover] ?? ""),
-    });
+    };
+
+    // One row per scrip per session is the premise of the whole archive. A duplicate
+    // means the source changed shape, and silently keeping the last one would hide it.
+    const already = seen.get(symbol);
+
+    if (already !== undefined) {
+      // The dated route re-lists some scrips on historical days. A repeat carrying exactly
+      // the same values is the same observation twice, so where the caller has opted in it
+      // is collapsed to one — and counted, never swallowed. A repeat whose values differ is
+      // two conflicting claims about one session, which no route may resolve by choosing.
+      if (options.collapseIdenticalDuplicates === true && sameRow(already, parsed)) {
+        collapsedDuplicates++;
+        continue;
+      }
+
+      throw new Error(`"${symbol}" appears twice in one session's table.`);
+    }
+
+    seen.set(symbol, parsed);
+    rows.push(parsed);
   }
 
   // Checked before the floor, because an empty table is below every floor and the two
@@ -324,7 +374,7 @@ function parseFragment(html: string, options: FragmentOptions): FragmentOutcome 
 
   rows.sort((a, b) => (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
 
-  return { kind: "session", snapshot: { date, rows } };
+  return { kind: "session", snapshot: { date, rows }, collapsedDuplicates };
 }
 
 /**
@@ -345,6 +395,25 @@ export function parseTodaySharePrice(html: string): DaySnapshot {
   }
 
   return outcome.snapshot;
+}
+
+/**
+ * One dated day that parsed, together with the normalisations the sweep has to report.
+ *
+ * A wrapper rather than a field on `DaySnapshot`: that type is the shape this repository
+ * *stores*, and it is read back off disk by `sessionFingerprint` and by the archive's own
+ * tests. A collapse is a fact about one parse, not a property of a session, and hanging it
+ * off the snapshot would let the writer ignore it silently — which is precisely the
+ * behaviour this count exists to prevent.
+ */
+export interface ParsedBackfillDay {
+  /** The session's prices — what becomes the day's CSV. */
+  snapshot: DaySnapshot;
+  /**
+   * How many repeated rows were dropped because a scrip was listed more than once with
+   * identical values. Zero on an ordinary day, and always zero on the daily route.
+   */
+  collapsedDuplicates: number;
 }
 
 /**
@@ -376,14 +445,17 @@ export function parseBackfillDay(
   html: string,
   requestedDate: string,
   minRows: number = MIN_HISTORICAL_ROWS,
-): DaySnapshot | null {
+): ParsedBackfillDay | null {
   const outcome = parseFragment(html, {
     minRows,
     allowEmpty: true,
     expectDate: requestedDate,
+    collapseIdenticalDuplicates: true,
   });
 
-  if (outcome.kind === "session") return outcome.snapshot;
+  if (outcome.kind === "session") {
+    return { snapshot: outcome.snapshot, collapsedDuplicates: outcome.collapsedDuplicates };
+  }
 
   const claimed = companyCount(html);
   if (claimed !== null && claimed > 0) {

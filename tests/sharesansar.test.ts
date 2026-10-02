@@ -269,11 +269,14 @@ describe("textOf", () => {
 
 describe("parseBackfillDay: the real dated response", () => {
   it("reads a past session the same way it reads today's", () => {
-    const snapshot = parseBackfillDay(datedCapture, "2024-06-13", MIN_HISTORICAL_ROWS);
+    const day = parseBackfillDay(datedCapture, "2024-06-13", MIN_HISTORICAL_ROWS);
+    const snapshot = day?.snapshot;
 
     expect(snapshot?.date).toBe("2024-06-13");
     expect(snapshot?.rows.length).toBeGreaterThan(MIN_PLAUSIBLE_ROWS);
     expect(snapshot?.rows.find((entry) => entry.symbol === "NABIL")?.close).toBeGreaterThan(0);
+    // Nothing is repeated in this capture, so the collapse path never runs on it.
+    expect(day?.collapsedDuplicates).toBe(0);
   });
 
   it("refuses a response that answers for a different day", () => {
@@ -362,6 +365,86 @@ describe("parseBackfillDay: refusing to mistake truncation for a holiday", () =>
       `</tbody></table>`;
 
     expect(() => parseBackfillDay(three, "2011-06-13", 10)).toThrow(/below the floor of 10/);
-    expect(parseBackfillDay(three, "2011-06-13", 1)?.rows).toHaveLength(3);
+    expect(parseBackfillDay(three, "2011-06-13", 1)?.snapshot.rows).toHaveLength(3);
+  });
+});
+
+describe("a scrip listed more than once", () => {
+  /** The same observation twice, which is what the dated route sometimes sends. */
+  const same = (symbol: string, open = "1") =>
+    row(symbol, open, "2", "1", "2", "3", "4");
+
+  it("collapses a repeat that carries the same figures, and counts it", () => {
+    const html = page({
+      header: HEADER,
+      date: "2011-11-29",
+      rows: [same("ADBL"), same("ADBL")],
+    });
+
+    const day = parseBackfillDay(html, "2011-11-29", 1);
+
+    expect(day?.snapshot.rows).toHaveLength(1);
+    expect(day?.collapsedDuplicates).toBe(1);
+  });
+
+  it("counts every extra copy, not just the second", () => {
+    // The real 2011-11-29 shape: ADBL three times, beside a scrip that is not repeated.
+    const html = page({
+      header: HEADER,
+      date: "2011-11-29",
+      rows: [same("ADBL"), same("ADBL"), same("ADBL"), same("ABBL", "5")],
+    });
+
+    const day = parseBackfillDay(html, "2011-11-29", 1);
+
+    expect(day?.snapshot.rows.map((entry) => entry.symbol)).toEqual(["ABBL", "ADBL"]);
+    expect(day?.collapsedDuplicates).toBe(2);
+  });
+
+  it("compares parsed values, so punctuation is not a disagreement", () => {
+    // "1,000" and "1000" are the same number, and "-" and an empty cell are both an
+    // absent one. Comparing the source's cell text instead would read this pair as a
+    // conflict and refuse a day whose repeats are in fact identical.
+    const html = page({
+      header: HEADER,
+      date: "2011-11-29",
+      rows: [
+        row("ADBL", "1,000", "-", "", "1000", "1", "2"),
+        row("ADBL", "1000", "-", "-", "1000", "1", "2"),
+      ],
+    });
+
+    const day = parseBackfillDay(html, "2011-11-29", 1);
+
+    expect(day?.snapshot.rows).toHaveLength(1);
+    expect(day?.collapsedDuplicates).toBe(1);
+  });
+
+  it("still refuses a repeat whose figures differ", () => {
+    // The real 2014-03-13 shape: BBBL twice, differing only in Open. Those are two
+    // conflicting claims about one session, and nothing here may choose between them.
+    const html = page({
+      header: HEADER,
+      date: "2014-03-13",
+      rows: [same("BBBL", "124"), same("BBBL", "149")],
+    });
+
+    expect(() => parseBackfillDay(html, "2014-03-13", 1)).toThrow(/appears twice/);
+  });
+
+  it("is still refused outright on today's page, even when identical", () => {
+    // The collapse is opted into by the dated route alone. On the daily run, which nobody
+    // is watching, a repeated scrip means the response is malformed and the job must fail
+    // rather than archive whatever it happened to read.
+    const ordinary = Array.from({ length: MIN_PLAUSIBLE_ROWS + 1 }, (_, i) =>
+      row(`S${String(i).padStart(3, "0")}`, "100", "110", "90", "105", "1,000", "105,000.00"),
+    );
+    const html = page({
+      header: HEADER,
+      date: "2026-09-30",
+      rows: [...ordinary, same("NABIL"), same("NABIL")],
+    });
+
+    expect(() => parseTodaySharePrice(html)).toThrow(/appears twice/);
   });
 });

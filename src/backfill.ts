@@ -46,6 +46,7 @@
 import { eachDay } from "./lib/dates.js";
 import { sessionFingerprint, snapshotToCsv } from "./lib/serialize.js";
 import { ImplausibleSessionError, parseBackfillDay } from "./sources/sharesansar.js";
+import type { ParsedBackfillDay } from "./sources/sharesansar.js";
 import type { DaySnapshot } from "./types.js";
 
 /**
@@ -110,6 +111,7 @@ export interface YearStats {
   skipped: number;
   refused: number;
   repeated: number;
+  collapsed: number;
   failed: number;
   minRows: number | null;
   medianRows: number | null;
@@ -128,12 +130,26 @@ export interface RepeatDay {
   matches: string;
 }
 
+/**
+ * A day the source listed a scrip more than once with identical values.
+ *
+ * The day *was* archived — one row kept per repeat — so this is not an unresolved day and
+ * does not touch the exit code. It is reported because a collapse count that climbs is the
+ * signature of the source changing shape, in the same way a year whose minimum row count
+ * sits below its median is the signature of truncation.
+ */
+export interface CollapsedDay {
+  date: string;
+  duplicates: number;
+}
+
 export interface BackfillSummary {
   archived: Array<{ date: string; rows: number }>;
   noSession: string[];
   skipped: string[];
   refused: Array<{ date: string; rows: number; message: string }>;
   repeated: RepeatDay[];
+  collapsed: CollapsedDay[];
   failed: Array<{ date: string; message: string }>;
   years: Map<string, YearStats>;
 }
@@ -145,6 +161,7 @@ interface Accumulator {
   skipped: string[];
   refused: Array<{ date: string; rows: number; message: string }>;
   repeated: RepeatDay[];
+  collapsed: CollapsedDay[];
   failed: Array<{ date: string; message: string }>;
   countsByYear: Map<string, number[]>;
 }
@@ -156,6 +173,7 @@ function emptyAccumulator(): Accumulator {
     skipped: [],
     refused: [],
     repeated: [],
+    collapsed: [],
     failed: [],
     countsByYear: new Map(),
   };
@@ -249,9 +267,9 @@ export async function runBackfill(
       continue;
     }
 
-    let snapshot: DaySnapshot | null;
+    let day: ParsedBackfillDay | null;
     try {
-      snapshot = parseBackfillDay(html, date, options.minRows);
+      day = parseBackfillDay(html, date, options.minRows);
     } catch (error) {
       if (error instanceof ImplausibleSessionError) {
         // Real data, just less of it than the floor allows — an operator can re-run this
@@ -265,11 +283,13 @@ export async function runBackfill(
       continue;
     }
 
-    if (snapshot === null) {
+    if (day === null) {
       accumulator.noSession.push(date);
       deps.log(`${date}  no session  the market did not trade`);
       continue;
     }
+
+    const snapshot = day.snapshot;
 
     // The session's own content, which is the only thing two dates can be compared by —
     // see the note on `sessionFingerprint`. Checked against everything on disk as well
@@ -296,6 +316,16 @@ export async function runBackfill(
 
     consecutiveRepeats = 0;
     fingerprints.set(fingerprint, date);
+
+    // Recorded here rather than at parse time: a day that turns out to be another day's
+    // table is reported as `repeated` and is not archived at all, so counting its collapse
+    // too would report the same day twice for opposite reasons.
+    if (day.collapsedDuplicates > 0) {
+      accumulator.collapsed.push({ date, duplicates: day.collapsedDuplicates });
+      deps.log(
+        `${date}  collapsed  ${day.collapsedDuplicates} identical duplicate row(s) dropped`,
+      );
+    }
 
     if (!options.dryRun) {
       try {
@@ -335,6 +365,7 @@ function summarise(accumulator: Accumulator): BackfillSummary {
     ...accumulator.noSession.map(yearOf),
     ...accumulator.refused.map((entry) => yearOf(entry.date)),
     ...accumulator.repeated.map((entry) => yearOf(entry.date)),
+    ...accumulator.collapsed.map((entry) => yearOf(entry.date)),
     ...accumulator.failed.map((entry) => yearOf(entry.date)),
   ]);
 
@@ -348,6 +379,7 @@ function summarise(accumulator: Accumulator): BackfillSummary {
       skipped: accumulator.skipped.filter((date) => yearOf(date) === year).length,
       refused: accumulator.refused.filter((entry) => yearOf(entry.date) === year).length,
       repeated: accumulator.repeated.filter((entry) => yearOf(entry.date) === year).length,
+      collapsed: accumulator.collapsed.filter((entry) => yearOf(entry.date) === year).length,
       failed: accumulator.failed.filter((entry) => yearOf(entry.date) === year).length,
       minRows: counts.length === 0 ? null : Math.min(...counts),
       medianRows: counts.length === 0 ? null : median(counts),
@@ -361,6 +393,7 @@ function summarise(accumulator: Accumulator): BackfillSummary {
     skipped: accumulator.skipped,
     refused: accumulator.refused,
     repeated: accumulator.repeated,
+    collapsed: accumulator.collapsed,
     failed: accumulator.failed,
     years,
   };
@@ -392,6 +425,7 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
     lines.push(`    skipped     ${stats.skipped} days`);
     lines.push(`    refused     ${stats.refused} days`);
     lines.push(`    repeated    ${stats.repeated} days`);
+    lines.push(`    collapsed   ${stats.collapsed} days`);
     lines.push(`    failed      ${stats.failed} days`);
     lines.push(`    scrips/day  ${scrips}`);
   }
@@ -419,6 +453,16 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
     }
   }
 
+  if (summary.collapsed.length > 0) {
+    lines.push("");
+    lines.push("Days the source listed a scrip more than once with identical values.");
+    lines.push("The repeats were dropped and each session archived once:");
+
+    for (const entry of summary.collapsed) {
+      lines.push(`  ${entry.date}  ${entry.duplicates} duplicate row(s) collapsed`);
+    }
+  }
+
   if (summary.failed.length > 0) {
     lines.push("");
     lines.push("Failed days — re-run the range to pick them up:");
@@ -432,7 +476,8 @@ export function formatSummary(summary: BackfillSummary, options: BackfillOptions
   lines.push(
     `Archived ${summary.archived.length}, skipped ${summary.skipped.length}, ` +
       `no session ${summary.noSession.length}, refused ${summary.refused.length}, ` +
-      `repeated ${summary.repeated.length}, failed ${summary.failed.length}.`,
+      `repeated ${summary.repeated.length}, collapsed ${summary.collapsed.length}, ` +
+      `failed ${summary.failed.length}.`,
   );
 
   return lines.join("\n");
