@@ -73,10 +73,15 @@ committed file already has them:
   derived on the page (`Diff %`, `VWAP %`, `52 Weeks High`, and a `Conf.` figure nobody
   has explained). Storing somebody else's arithmetic would freeze a schema the source is
   free to change, and every one of those can be recomputed from these seven.
-- **The date is the session the source reports, never the wall clock.** NEPSE trades
-  Sunday to Thursday and closes for holidays; on a non-trading day the page still
-  renders, showing the *previous* session. Stamping today's date onto that would file a
-  day that never traded, and nothing downstream could tell.
+- **The date is the session the source reports, never the wall clock.** The exchange
+  closes for holidays, and on a non-trading day the page still renders, showing the
+  *previous* session. Stamping today's date onto that would file a day that never traded,
+  and nothing downstream could tell.
+- **Nothing here assumes a trading week.** NEPSE's has changed: this archive holds
+  Sunday-to-Thursday sessions from 2011 to 5 April 2026, and Monday-to-Friday sessions
+  from 10 April 2026 onward. The schedule therefore runs every day, and the backfill
+  walks calendar days — a closed day is a no-op rather than something the code has to
+  predict. See [How it runs](#how-it-runs).
 
 ## Reading it
 
@@ -111,9 +116,16 @@ losing the property that a non-trading day is a no-op.
 ## How it runs
 
 `.github/workflows/daily.yml`, at **10:15 UTC** — 16:00 in Kathmandu, an hour after the
-close — on **Sunday through Thursday**, which is the NEPSE trading week, not the
-Monday-to-Friday one. It installs, typechecks, tests, fetches, and commits if the file
+close — **every day**. It installs, typechecks, tests, fetches, and commits if the file
 changed.
+
+**Every day, rather than on trading days, because the trading week is not fixed.** The
+archive itself shows it changing: Sunday-to-Thursday sessions run from 2011 until 5 April
+2026, and Monday-to-Friday ones from 10 April 2026 onward. A schedule written for the old
+week would have quietly stopped fetching every Friday — a fifth of the year, missing with
+no failure reported anywhere — which is exactly the kind of silent gap this repository
+exists to avoid. A day the market was shut costs one request and commits nothing, so
+running daily is much cheaper than being wrong.
 
 A run on a holiday is a no-op rather than merely tolerable: the source reports the
 previous session, whose file already exists and is byte-identical, so there is nothing to

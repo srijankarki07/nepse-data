@@ -30,11 +30,16 @@
  *
  * ## The date comes from the page, never the clock
  *
- * NEPSE trades Sunday to Thursday and closes for holidays. On a non-trading day the
- * page still renders — showing the *previous* session — so a job that stamped today's
- * date onto that data would file a day that never traded, and nothing downstream could
- * tell. The page states the session it is showing in an "As of" heading, and that is
- * the only date this code will use. When it is absent, this throws rather than guesses.
+ * The exchange closes for holidays, and on a non-trading day the page still renders —
+ * showing the *previous* session — so a job that stamped today's date onto that data
+ * would file a day that never traded, and nothing downstream could tell. The page states
+ * the session it is showing in an "As of" heading, and that is the only date this code
+ * will use. When it is absent, this throws rather than guesses.
+ *
+ * Note that the trading *week* is deliberately not encoded anywhere in this module. It
+ * has changed: the archive holds Sunday-to-Thursday sessions up to 2026-04-05 and
+ * Monday-to-Friday ones from 2026-04-10. Anything that predicted trading days from a
+ * weekday rule would have gone on quietly fetching the wrong ones.
  *
  * ## Columns are matched by name
  *
