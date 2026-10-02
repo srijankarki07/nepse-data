@@ -1,6 +1,6 @@
 # Handoff
 
-Where this stands, what to do next, and — most usefully — **what has already been tried
+Where this stands, what to do next, and (most usefully) **what has already been tried
 and ruled out**, so none of it gets re-derived.
 
 The README describes what the project *is*. This describes the state it is *in*.
@@ -12,7 +12,7 @@ The README describes what the project *is*. This describes the state it is *in*.
 Nothing is blocked. The push works, both branches are on the remote, and every workflow
 has run on a runner.
 
-The next real step is the sweep — see [Roadmap](#roadmap) — and it is worth dispatching a
+The next real step is the sweep (see [Roadmap](#roadmap)) and it is worth dispatching a
 narrow range before the full one, because the two things that can go wrong (a rate limit
 at hour one, a token that dies mid-run) only show up over distance.
 
@@ -27,19 +27,19 @@ workflow … without 'workflow' scope`, the token has lost the scope and needs
 
 | | |
 | --- | --- |
-| Repository | `github.com/srijankarki07/nepse-data` — **public**, default branch `main` |
+| Repository | `github.com/srijankarki07/nepse-data`, **public**, default branch `main` |
 | Branches | `feat/backfill` merged to `main` with `--no-ff` |
 | Blocked on | **nothing** |
 | Workflows | all three have run on a runner; the daily job is verified end to end |
 | Tests | **108** passing, typecheck clean |
 | Archive | **3,596 sessions**, 2011-01-01 → 2026-09-30, 38 MB, ~16 years |
-| Index | `data/latest.json` — latest and previous session, worth reading first |
-| Unresolved | **7 days** out of 5,752 — all source artifacts, listed below |
+| Index | `data/latest.json`, latest and previous session, worth reading first |
+| Unresolved | **7 days** out of 5,752, all source artifacts, listed below |
 
 **Public is recent.** The repository was private for its whole life up to this point
 because publishing these figures is redistribution, and the reasoning is kept in the
 README's *Provenance* rather than deleted. What changed the answer is that the archive is
-now wholly this scraper's output — the condition the project had set for itself. If that
+now wholly this scraper's output: the condition the project had set for itself. If that
 judgement is revisited, the README is where the argument lives.
 
 ---
@@ -51,11 +51,11 @@ of them. They are listed here so nobody spends an afternoon rediscovering that.
 
 | Day | Why |
 | --- | --- |
-| 2011-01-03 | bundled — `ADBL` appears twice, two sessions in one response |
-| 2011-11-29 | bundled — `ADBL` |
-| 2012-10-01 | bundled — `ACEDBL` |
-| 2013-03-03 | bundled — `KBBL` |
-| 2014-03-13 | bundled — `ADBL` |
+| 2011-01-03 | bundled: `ADBL` appears twice, two sessions in one response |
+| 2011-11-29 | bundled, `ADBL` |
+| 2012-10-01 | bundled, `ACEDBL` |
+| 2013-03-03 | bundled, `KBBL` |
+| 2014-03-13 | bundled, `ADBL` |
 | 2011-06-20 | served `2011-06-19`'s table under a `2011-06-20` heading |
 | 2016-09-04 | served `2016-09-03`'s table under a `2016-09-04` heading |
 
@@ -81,15 +81,15 @@ Everything below was checked by running it, not by reading it.
 ## What is *not* verified
 
 - **Never run on a non-trading day in the daily job.** The no-op follows from the source
-  reporting the previous session, and idempotency was verified — but not across a real
+  reporting the previous session, and idempotency was verified, but not across a real
   holiday, because the archive has not yet been left alone for one.
 - **The archive has not yet grown on its own.** The daily workflow has been dispatched by
   hand and worked; nothing has yet been committed by the *schedule*. Leave it a week and
   check the archive grew by the right number of sessions.
 - **No adjustment for bonus shares, rights or splits**, deliberately. See the README.
 
-The two things this section previously worried about — whether a runner can reach the
-site, and whether a token survives a two-hour sweep — both have answers now: yes, and
+The two things this section previously worried about, whether a runner can reach the
+site, and whether a token survives a two-hour sweep, both have answers now: yes, and
 yes. The full sweep ran to completion with **no re-authentication and no rate limiting**,
 which is the strongest evidence available short of leaving it running for months.
 
@@ -101,8 +101,8 @@ which is the strongest evidence available short of leaving it running for months
 | **No two sessions hold identical prices** | Checked across all 3,596 files; see `tests/archive.test.ts` |
 | No file's rows disagree with its own filename | Same check |
 | A long sweep completes on a runner | 5,752 days, ~105 minutes, one job, no re-auth |
-| The data reflects reality, not just the scraper | Two documented closures reproduced independently — see below |
-| The daily job is a no-op when the session is archived | Dispatched by hand: 352 scrips fetched, *"Unchanged — already archived"* |
+| The data reflects reality, not just the scraper | Two documented closures reproduced independently; see below |
+| The daily job is a no-op when the session is archived | Dispatched by hand: 352 scrips fetched, *"Unchanged, already archived"* |
 
 **The closures are the best check available.** The per-year counts were not tuned to
 anything; they fell out of the source. And the archive independently reproduces the
@@ -115,7 +115,7 @@ data would not agree with history twice at month resolution.
 ## The traps worth not re-introducing
 
 **`pnpm fetch` is a pnpm built-in.** It populates the package store, shadows a script of
-the same name, exits `0`, and archives nothing — so the daily job would have succeeded
+the same name, exits `0`, and archives nothing, so the daily job would have succeeded
 every day while the archive silently never grew. The CLI command is `scrape` for that
 reason. It is noted in `src/cli.ts`, in `daily.yml`, and in the commit message. Do not
 rename it back. (`backfill` is not a builtin, but check before adding the next one; the
@@ -124,25 +124,24 @@ failure is invisible.)
 **A zero row count does not mean the market was closed.** A response truncated exactly at
 the header boundary has zero rows too, and a sweep that read that as a holiday would drop
 a real session out of the archive with nothing in any log to show for it. Emptiness is
-only accepted on the page's own evidence — `No Record Found.` or a stated count of zero —
-and anything else throws. Note the site writes **`Compaines`**, so the marker is matched
+only accepted on the page's own evidence (`No Record Found.` or a stated count of zero, and anything else throws. Note the site writes **`Compaines`**, so the marker is matched
 as `Comp\w*`; matching only the correct spelling would mean the evidence silently stopped
 being found the day the typo is fixed.
 
 **The source sometimes bundles two sessions into one response.** `2011-01-03` returns
-every scrip twice, and the second row opens exactly where the first closed — so it is two
+every scrip twice, and the second row opens exactly where the first closed, so it is two
 consecutive sessions, not a duplicated row. The parser refuses duplicate scrips by design
 (that guard is what catches a genuinely malformed table), so such a day is reported as
 **failed**, with the reason, rather than resolved by guessing which row is the session.
 Expect a handful of these; they are the source's, and re-running will not fix them.
 
 **The source also serves the previous session for days it has no data for.** `2011-06-20`
-returns `2011-06-19`'s table byte-for-byte under a `2011-06-20` heading — same 61 scrips,
+returns `2011-06-19`'s table byte-for-byte under a `2011-06-20` heading, same 61 scrips,
 same prices. Only the heading is different, which is why a single response cannot detect
 it and why the sweep digests the *table*. Such a day is refused by name, not written.
 
 The first version of this guard aborted the whole sweep on the first repeat, and a 2011
-run stopped dead at 2011-06-20 having archived 103 sessions — losing July to December to
+run stopped dead at 2011-06-20 having archived 103 sessions, losing July to December to
 one hole in the source. It now refuses the day and carries on, aborting only after
 `MAX_CONSECUTIVE_REPEATS` (10) in a row. If a sweep ever stops that way, the endpoint has
 genuinely broken.
@@ -150,36 +149,36 @@ genuinely broken.
 **A floor of 10 was wrong and was measured down to 3.** Early sessions are not a smaller
 version of today's market but a tiny one: January 2011 has days of 4, 5 and 6 scrips. The
 first guess refused every real session in the first weeks of the range. The floor is a
-compromise at these counts — truncation and a genuinely tiny market look alike — which is
+compromise at these counts (truncation and a genuinely tiny market look alike) which is
 exactly why the sweep reports per-year min/median/max.
 
 **NEPSE's trading week changed mid-archive, and a schedule that encoded the old one
 broke silently.** The archive shows Sunday-to-Thursday sessions from 2011 until
-**2026-04-05**, and Monday-to-Friday sessions from **2026-04-10** onwards — the last
+**2026-04-05**, and Monday-to-Friday sessions from **2026-04-10** onwards: the last
 Sunday and the first Friday are one week apart, and the Friday sessions are full ones
 (median 344 scrips, indistinguishable from Monday's 342). This was found by checking the
 day-of-week distribution of the archive against a claim that the week was Monday to
 Thursday, not by anything failing.
 
-The daily cron had been written as `0-4` — Sunday through Thursday — so from April 2026
+The daily cron had been written as `0-4` (Sunday through Thursday) so from April 2026
 it would have stopped fetching **every Friday**, about a fifth of each year, with no
 failure reported anywhere. The archive is complete only because the backfill walks
 calendar days and happened to cover the period.
 
 **The schedule now runs every day**, deliberately. A closed day costs one request and
 commits nothing, because the source keeps reporting the previous session. Two wasted runs
-a week is much cheaper than being wrong the next time the exchange changes its week — and
+a week is much cheaper than being wrong the next time the exchange changes its week, and
 it has changed once, which is enough to know it is not a fixed fact about the world.
 Nothing else in the codebase may assume a trading week either: the backfill walks
 calendar days, and the parser takes the date from the page rather than deriving it.
 
 **The general lesson: a weekday rule is a prediction about someone else's business
-calendar.** This repository is built to avoid predicting — it refuses rather than guesses,
-and it reads dates from the source rather than the clock — and the cron was the one place
+calendar.** This repository is built to avoid predicting: it refuses rather than guesses,
+and it reads dates from the source rather than the clock, and the cron was the one place
 that quietly broke that rule.
 
 **The dated route echoes the requested date in its heading.** So on that route the
-heading is not independent confirmation — it is the request, read back. It still earns its
+heading is not independent confirmation: it is the request, read back. It still earns its
 place, because it catches the endpoint falling back to the current session, which is what
 every dead route below did. What it cannot catch is an endpoint that *synthesises* the
 heading while serving live prices; only the cross-day table digest in `backfill.ts` does.
@@ -205,30 +204,30 @@ The Search button is a click handler, not a form submission, and the endpoint is
 same `#headFixed` table, so the existing parser reads it unchanged.
 
 Requires the CSRF token and session cookie from a GET of the daily page; without them it
-answers `419 CSRF token mismatch`. One request per calendar day — there is no range
+answers `419 CSRF token mismatch`. One request per calendar day: there is no range
 parameter, and `fromdate`/`todate` are accepted and ignored.
 
 ### Routes ruled out (kept so they are not re-tried)
 
 | Attempt | Result |
 | --- | --- |
-| `GET /today-share-price?date=2024-06-13` | Ignored — returns the current session |
+| `GET /today-share-price?date=2024-06-13` | Ignored, returns the current session |
 | `GET …?fromdate=2024-06-13` | Ignored |
 | `GET …?date=…&sector=` | Ignored |
-| `GET …?date=…&_=<random>` with `Cache-Control: no-cache` and a browser UA | Ignored — **not** a CDN caching artefact, the parameter is genuinely unused |
+| `GET …?date=…&_=<random>` with `Cache-Control: no-cache` and a browser UA | Ignored, and **not** a CDN caching artefact: the parameter is genuinely unused |
 | `GET /today-share-price/2024-06-13` | `404` |
 | `POST /today-share-price` with `date=…` | `405 Method Not Allowed` |
-| `POST` with the page's real CSRF `_token`, a cookie jar, and `X-CSRF-TOKEN` | Still `405` — this is the one that misled: the form is real, but the *route it suggests* is not the one the button uses |
+| `POST` with the page's real CSRF `_token`, a cookie jar, and `X-CSRF-TOKEN` | Still `405`. This is the one that misled: the form is real, but the *route it suggests* is not the one the button uses |
 | `GET /company/NABIL` | `200`, and has a price-history section, but its `</table>` tags are unbalanced, so a regex reader finds no rows |
 | `GET /company-detail/NABIL` | `404` |
 | `GET /sitemap.xml` | `404` |
 
 ### Leads that are now closed
 
-- **"Read the site's JavaScript"** — done, and it was the answer. The endpoint is above.
-- **`/sectorwise-share-price`** and **"Datewise Indices"** — never examined, and now
+- **"Read the site's JavaScript"** is done, and it was the answer. The endpoint is above.
+- **`/sectorwise-share-price`** and **"Datewise Indices"**, never examined, and now
   unnecessary. The main route is dated.
-- **A real HTML parser for the company pages** — dead. That route was only ever a means to
+- **A real HTML parser for the company pages**, dead. That route was only ever a means to
   a dated table, which `/ajaxtodayshareprice` provides directly. **Do not reopen the
   dependency question on its account**; this repository still has zero runtime
   dependencies and the backfill did not change that.
@@ -237,10 +236,10 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 
 ## Decisions already made, so they are not relitigated
 
-- **Published once the whole archive was this scraper's output** — which the finished
+- **Published once the whole archive was this scraper's output**, which the finished
   backfill made true. The reasoning for and against is in the README's *Provenance*.
 - **The index carries no timestamp.** It is rewritten on every run, so one would make it
-  differ every day — including every holiday — and the daily job would commit a change
+  differ every day (including every holiday) and the daily job would commit a change
   daily, losing the no-op property. Freshness is `latest`, which moves only with the
   market.
 - **One file per session, not one per scrip.** Per-symbol files rewritten daily is how
@@ -248,13 +247,13 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 - **Eight columns.** The source publishes twenty-four; the rest are derived on the page.
 - **The date comes from the page's own heading**, never the clock.
 - **A missing value is an empty field**, never `0`.
-- **Nested tables are not separated** — recorded as a limitation in the README rather
+- **Nested tables are not separated**, recorded as a limitation in the README rather
   than fixed, because the source has none.
 - **The backfill walks calendar days, not trading days.** ~5,750 requests rather than
   ~4,100. A weekday rule would cut the sweep by a quarter and silently drop the special
   sessions NEPSE has occasionally held on a Friday or Saturday.
 - **`--to` never reaches today.** A session that has not closed yet is still changing, and
-  the daily job would later rewrite it — the one thing the append-only rule prevents.
+  the daily job would later rewrite it: the one thing the append-only rule prevents.
   Today belongs to `scrape`.
 - **The backfill shares the daily job's concurrency group**, so a sweep queues the 10:15
   UTC daily run rather than racing it. A delayed daily run is visible; a lost one is not.
@@ -269,12 +268,12 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
    dispatched by hand, but nothing has yet been committed by the *timer*. Leave it a week
    and confirm the archive grew by the right number of sessions.
 2. ~~Run the real sweep.~~ Done: 5,752 days, 3,596 sessions, 38 MB, seven days unresolved
-   and all seven the source's. Re-running any range is cheap — archived days are skipped
-   without a request — so a fresh sweep is a safe way to pick up anything the source adds
+   and all seven the source's. Re-running any range is cheap, archived days are skipped
+   without a request, so a fresh sweep is a safe way to pick up anything the source adds
    for the gaps above.
 3. ~~Wire it into Bachat Khata.~~ **Started.** The backend has a
    `NepseArchiveQuoteProvider` that reads `data/latest.json` and the two most recent
-   sessions, and it is now that project's default — the community mirror it replaces is
+   sessions, and it is now that project's default, the community mirror it replaces is
    kept as the rollback. Verified against the live archive. Committed on
    `feat/nepse-data-quotes` in the backend repository, **deliberately not pushed**: that
    branch sits on an unpushed five-branch portfolio stack, so pushing it would publish all
@@ -298,7 +297,7 @@ Worth doing both runs together, because they exercise the same seam.
 | `nepse-data` | `main` | This repository. 3,596 sessions backfilled 2011 → today; 99 tests |
 
 The backend's `docs/features/portfolio.md` has a **"Trying it against a real statement"**
-runbook — the sequence for the first live run, what each step should show, and the two
+runbook, the sequence for the first live run, what each step should show, and the two
 failure modes most likely to appear. Two of its expectations look like bugs and are not: a
 fresh import has **no prices at all** until Refresh is pressed, and the sector chart shows
 a large `Unclassified` slice.

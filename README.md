@@ -6,13 +6,13 @@ Every figure comes from a scraper in this repository, runs on a schedule in this
 repository, and lands as a plain CSV committed to this repository. Nothing here depends
 on another person's dataset being maintained.
 
-> **Status — fifteen years of history, published.**
+> **Status: fifteen years of history, published.**
 >
 > The daily pipeline works and is tested, and the **backfill has been run**. The archive
 > holds **3,596 sessions** covering 2011 to today, every one of them this scraper's own
 > output. See [Backfilling history](#backfilling-history).
 >
-> This repository is **public**. That was a decision rather than a default — a published
+> This repository is **public**. That was a decision rather than a default: a published
 > archive of these figures is redistribution, and the reasoning for and against is kept
 > in [Provenance](#provenance) rather than deleted now that the answer changed.
 >
@@ -21,7 +21,7 @@ on another person's dataset being maintained.
 ## Layout
 
 ```
-data/latest.json                  the index — read this first
+data/latest.json                  the index. Read this first
 data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
                                   3,596 files across 16 years, 38 MB in total
 src/                              the scraper and the CLI
@@ -33,7 +33,7 @@ tests/                            including real captured responses as fixtures
 **Daily files, not per-symbol files.** One file holds every scrip the source listed that
 session, written once and never touched again.
 
-The obvious alternative — a file per ticker, appended to daily — is how the community
+The obvious alternative (a file per ticker, appended to daily) is how the community
 repositories this replaces reached several hundred megabytes. Every commit rewrites
 every file, so git stores a full new copy of each one and the history grows with the
 *archive* rather than with the data. A daily file costs a small fraction of that, and its
@@ -80,7 +80,7 @@ committed file already has them:
 - **Nothing here assumes a trading week.** NEPSE's has changed: this archive holds
   Sunday-to-Thursday sessions from 2011 to 5 April 2026, and Monday-to-Friday sessions
   from 10 April 2026 onward. The schedule therefore runs every day, and the backfill
-  walks calendar days — a closed day is a no-op rather than something the code has to
+  walks calendar days: a closed day is a no-op rather than something the code has to
   predict. See [How it runs](#how-it-runs).
 
 ## Reading it
@@ -96,34 +96,34 @@ committed file already has them:
 }
 ```
 
-A directory tree is not enumerable over the transports this data is read through —
+A directory tree is not enumerable over the transports this data is read through:
 `raw.githubusercontent.com` and jsDelivr both serve *files*, and neither will list a
-directory — so without this a consumer has no way to learn which date to ask for. It is
+directory, so without this a consumer has no way to learn which date to ask for. It is
 the difference between a dataset and a directory of files.
 
 `latest` and `previous` are the two most recent **sessions**, found by looking rather than
 by subtracting a day, because the market is shut two days in seven and for holidays. That
 pair is enough to price a holding and show its day change from a single fetch of
-`data/daily/<year>/<date>.csv` — and since one file holds every scrip for that session,
+`data/daily/<year>/<date>.csv`, and since one file holds every scrip for that session,
 that is **one request for the whole market**, rather than one per symbol.
 
 The file is rebuilt from the filenames on disk, never patched, so it cannot drift from the
 archive. It deliberately carries **no timestamp**: it is rewritten on every run, and a
-timestamp would make it differ every time — including on the days nothing happened, which
-is every holiday — so the daily job would find a change and commit every single day,
+timestamp would make it differ every time (including on the days nothing happened, which
+is every holiday), so the daily job would find a change and commit every single day,
 losing the property that a non-trading day is a no-op.
 
 ## How it runs
 
-`.github/workflows/daily.yml`, at **10:15 UTC** — 16:00 in Kathmandu, an hour after the
-close — **every day**. It installs, typechecks, tests, fetches, and commits if the file
+`.github/workflows/daily.yml`, at **10:15 UTC** (16:00 in Kathmandu, an hour after the
+close), **every day**. It installs, typechecks, tests, fetches, and commits if the file
 changed.
 
 **Every day, rather than on trading days, because the trading week is not fixed.** The
 archive itself shows it changing: Sunday-to-Thursday sessions run from 2011 until 5 April
 2026, and Monday-to-Friday ones from 10 April 2026 onward. A schedule written for the old
-week would have quietly stopped fetching every Friday — a fifth of the year, missing with
-no failure reported anywhere — which is exactly the kind of silent gap this repository
+week would have quietly stopped fetching every Friday (a fifth of the year), with
+no failure reported anywhere, which is exactly the kind of silent gap this repository
 exists to avoid. A day the market was shut costs one request and commits nothing, so
 running daily is much cheaper than being wrong.
 
@@ -148,7 +148,7 @@ works once, and it reaches back to **2011**.
 
 The daily page cannot be asked for a past date: its date picker sits in a form that posts
 to a route answering `405`, `?date=` is ignored, and the path form `404`s. The route that
-works is not in the markup at all — it is in the site's own JavaScript, where the Search
+works is not in the markup at all: it is in the site's own JavaScript, where the Search
 button turns out to be a click handler rather than a form submission:
 
 ```
@@ -160,17 +160,17 @@ It re-renders the same `#headFixed` table the daily parser already reads. So the
 reuses that parser unchanged, and the HTML-parser dependency that the per-company pages
 would have needed is not needed at all.
 
-**One request per calendar day.** The endpoint has no range parameter — `fromdate` and
-`todate` are accepted and silently ignored — so a sweep has to ask about every day,
+**One request per calendar day.** The endpoint has no range parameter (`fromdate` and
+`todate` are accepted and silently ignored), so a sweep has to ask about every day,
 including the ones the market was shut.
 
 `pnpm backfill` runs it locally; `.github/workflows/backfill.yml` runs it a year at a
-time from a runner. Both are safe to interrupt — a day already on disk is skipped without
+time from a runner. Both are safe to interrupt: a day already on disk is skipped without
 a request, so a re-run resumes rather than repeats. Re-running is also cheap: a sweep
 over a fully archived range finishes in seconds having asked the source nothing.
 
-The sweep over `2011-01-01 → 2026-09-30` — **5,752 calendar days** at 1.1 s, about 105
-minutes — produced:
+The sweep over `2011-01-01 → 2026-09-30`, **5,752 calendar days** at 1.1 s (about 105
+minutes) produced:
 
 | | |
 | --- | --- |
@@ -194,14 +194,14 @@ halt.
 Three things it refuses to do, each of which would corrupt the archive quietly:
 
 - **Treat zero rows as a holiday.** A response truncated at the header boundary also has
-  zero rows. Emptiness is accepted only when the page says so itself — `No Record Found.`
-  or a stated count of zero — and an unexplained empty response is an error. (The site
+  zero rows. Emptiness is accepted only when the page says so itself, `No Record Found.`
+  or a stated count of zero, and an unexplained empty response is an error. (The site
   spells it `Compaines`; the marker is matched loosely, or it would stop being found the
   day the typo is fixed.)
 - **Trust one response about its own date.** The heading echoes the date that was asked
   for, so an endpoint serving one session under another date's heading would look
   correct. The sweep compares the *table* across days instead, refuses the day when two
-  dates return identical prices, and stops only if they run consecutively — a single one
+  dates return identical prices, and stops only if they run consecutively: a single one
   is a hole in the source, a run of them is the endpoint failing.
 - **Weaken the daily floor.** Today's market is ~350 scrips and the daily floor of 50
   guards a truncated response. History is not a smaller version of that market but a
@@ -210,21 +210,21 @@ Three things it refuses to do, each of which would corrupt the archive quietly:
   listings, and the sweep reports per-year counts so an operator can see when it is wrong.
 
 The sweep starts at 2011 because that is where coverage begins to be usable, but the
-early years are thin and the source's history is genuinely holey — 2006 has sessions with
+early years are thin and the source's history is genuinely holey: 2006 has sessions with
 three scrips, some *trading* days are absent entirely, and early 2011 only reaches ~84
 scrips by November. Gaps in the early archive are the source's, not the scraper's, and
 the sweep reports each day's outcome so the two cannot be confused.
 
 One artifact is worth knowing about: **the source occasionally bundles two consecutive
 sessions into one response.** `2011-01-03` returns every scrip twice, and the second row
-opens exactly where the first closed — so it is two sessions, not a duplicate. The
+opens exactly where the first closed, so it is two sessions, not a duplicate. The
 archive's premise is one row per scrip per session, so such a day is reported as failed
 rather than guessed at, and it is listed with its reason at the end of a sweep.
 
 ## Provenance
 
 The data is scraped from **ShareSansar**, which republishes the exchange's end-of-day
-figures. It is not obtained from NEPSE directly — the exchange's own API sits behind a
+figures. It is not obtained from NEPSE directly: the exchange's own API sits behind a
 token it generates in WebAssembly, which a scheduled job cannot reasonably obtain.
 
 **Publishing was a deliberate decision, not a default**, and the reasoning is kept on
@@ -235,7 +235,7 @@ rather than republishing. Private removed the question entirely.
 
 What made publishing available is the condition this repository set for itself: **the
 whole archive is this scraper's output.** All 3,596 sessions came from the code here
-reading the same source, and none was imported — so no other project's compilation is
+reading the same source, and none was imported, so no other project's compilation is
 carried in the history, and no later commit could have removed it if one had been.
 
 It remains a judgement rather than a settled right. Anyone reusing this data is taking it
@@ -248,7 +248,7 @@ The code is MIT (see `LICENSE`). The data is not covered by it.
 - **History before 2011 is not attempted.** The source's coverage is patchy before then,
   with some trading days absent entirely. See [Backfilling history](#backfilling-history).
 - **A day the market was shut leaves no file.** The archive records the sessions that
-  happened, not the days that did not, so a gap in the dates is ambiguous by itself — it
+  happened, not the days that did not, so a gap in the dates is ambiguous by itself: it
   may mean the market was closed, or that a sweep has not reached that day yet.
 - **The historical floor is measured, but only against the days sampled.** It is 3,
   because the smallest real session found in range has 4 scrips. At those counts a
