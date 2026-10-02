@@ -40,10 +40,10 @@ export interface DaySnapshot {
   /**
    * The trading date, `YYYY-MM-DD`, **as the source reports it**.
    *
-   * Deliberately not the wall-clock date. NEPSE trades Sunday to Thursday, and the
-   * exchange closes for holidays, so a run on a non-trading day sees the previous
-   * session's figures on the page. Taking today's date would file those under a day
-   * that never traded — silent corruption that no later check would catch.
+   * Deliberately not the wall-clock date. The exchange closes for holidays, and its
+   * trading week has changed within this archive's lifetime, so a run on a non-trading
+   * day sees the previous session's figures on the page. Taking today's date would file
+   * those under a day that never traded — silent corruption no later check would catch.
    */
   date: string;
   rows: QuoteRow[];

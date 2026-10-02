@@ -153,6 +153,31 @@ first guess refused every real session in the first weeks of the range. The floo
 compromise at these counts — truncation and a genuinely tiny market look alike — which is
 exactly why the sweep reports per-year min/median/max.
 
+**NEPSE's trading week changed mid-archive, and a schedule that encoded the old one
+broke silently.** The archive shows Sunday-to-Thursday sessions from 2011 until
+**2026-04-05**, and Monday-to-Friday sessions from **2026-04-10** onwards — the last
+Sunday and the first Friday are one week apart, and the Friday sessions are full ones
+(median 344 scrips, indistinguishable from Monday's 342). This was found by checking the
+day-of-week distribution of the archive against a claim that the week was Monday to
+Thursday, not by anything failing.
+
+The daily cron had been written as `0-4` — Sunday through Thursday — so from April 2026
+it would have stopped fetching **every Friday**, about a fifth of each year, with no
+failure reported anywhere. The archive is complete only because the backfill walks
+calendar days and happened to cover the period.
+
+**The schedule now runs every day**, deliberately. A closed day costs one request and
+commits nothing, because the source keeps reporting the previous session. Two wasted runs
+a week is much cheaper than being wrong the next time the exchange changes its week — and
+it has changed once, which is enough to know it is not a fixed fact about the world.
+Nothing else in the codebase may assume a trading week either: the backfill walks
+calendar days, and the parser takes the date from the page rather than deriving it.
+
+**The general lesson: a weekday rule is a prediction about someone else's business
+calendar.** This repository is built to avoid predicting — it refuses rather than guesses,
+and it reads dates from the source rather than the clock — and the cron was the one place
+that quietly broke that rule.
+
 **The dated route echoes the requested date in its heading.** So on that route the
 heading is not independent confirmation — it is the request, read back. It still earns its
 place, because it catches the endpoint falling back to the current session, which is what

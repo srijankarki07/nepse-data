@@ -2,20 +2,29 @@ name: Daily prices
 
 # Fetches the session and commits it. This is the whole point of the repository.
 #
-# ## Why the schedule looks like this
+# ## Why the schedule runs every day
 #
-# NEPSE trades **Sunday to Thursday** — not Monday to Friday — and closes at 15:00
-# Nepal time, which is UTC+05:45. GitHub's cron is UTC, so:
+# **NEPSE's trading week is not fixed, and this repository learned that the hard way.**
+# Its own archive shows the week changing mid-history:
 #
-#   - `0-4` in the day-of-week field is Sunday through Thursday *in UTC*, which is the
-#     same set of days in Nepal, because the offset is under six hours.
-#   - `15 10` is 10:15 UTC, which is 16:00 in Kathmandu — an hour after the close, so
-#     final figures have been published, and early enough that the rest of the day is
-#     left free if the run needs retrying by hand.
+#   - Sunday to Thursday sessions from 2011 until **2026-04-05**;
+#   - Monday to **Friday** sessions from **2026-04-10** onwards.
 #
-# A run on a holiday is harmless rather than merely tolerable: the source keeps
-# reporting the previous session, whose file already exists and is byte-identical, so
-# the job finds nothing to commit and exits.
+# A cron written for the old week (`0-4`, Sunday through Thursday) would have silently
+# stopped fetching every Friday from April 2026 — about a fifth of the year, missing from
+# the archive with nothing anywhere reporting a failure. That is precisely the silent gap
+# this repository exists to prevent, and it went unnoticed for months because the schedule
+# looked like it was working.
+#
+# So the schedule does not encode a trading week at all. It runs **daily**, and a day the
+# market was shut costs one request and commits nothing: the source keeps reporting the
+# previous session, whose file is already archived and byte-identical. Two wasted runs a
+# week is a far better trade than a silent hole that surfaces months later, and it stays
+# correct the next time the exchange changes its week.
+#
+# `15 10` is 10:15 UTC, which is 16:00 in Kathmandu (UTC+05:45) — an hour after the close,
+# so final figures have been published, and early enough that the rest of the day is left
+# free if the run needs retrying by hand.
 #
 # ## Why the commit matters beyond the data
 #
@@ -27,7 +36,9 @@ name: Daily prices
 
 on:
   schedule:
-    - cron: "15 10 * * 0-4"
+    # Every day, deliberately — see the note above on why the trading week is not
+    # encoded here. A closed day is a no-op.
+    - cron: "15 10 * * *"
   # So a failed or missed day can be picked up without waiting for tomorrow. Safe to
   # press repeatedly: re-fetching a session already archived writes nothing.
   workflow_dispatch:

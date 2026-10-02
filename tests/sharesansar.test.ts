@@ -114,9 +114,10 @@ describe("parseAsOfDate", () => {
   });
 
   it("returns null rather than falling back to the clock", () => {
-    // The whole point. NEPSE trades Sunday to Thursday and closes for holidays, so a run
-    // on a non-trading day sees the previous session. Stamping today's date onto it
-    // would file a day that never traded, and nothing downstream could tell.
+    // The whole point. The exchange closes for holidays and its trading week has changed
+    // within this archive's own lifetime, so a run on a non-trading day sees the previous
+    // session. Stamping today's date onto it would file a day that never traded, and
+    // nothing downstream could tell.
     expect(parseAsOfDate("<h5>Today's share price</h5>")).toBeNull();
     expect(parseAsOfDate("")).toBeNull();
   });
