@@ -16,7 +16,7 @@
  * This module reads the same `#headFixed` table from two different responses:
  *
  *   - **Today's page** (`/today-share-price`), which carries the table inline. That is
- *     what `fetchTodaySharePrice` and `parseTodaySharePrice` handle, and it is what the
+ *     what `fetchTodaySession` and `parseTodaySharePrice` handle, and it is what the
  *     daily workflow uses.
  *   - **The dated AJAX route** (`POST /ajaxtodayshareprice`), which re-renders the same
  *     table for an arbitrary past date. That is what `parseBackfillDay` handles, and it
@@ -49,7 +49,7 @@
  * store the wrong number in the right-looking field.
  */
 
-import { extractTableById, textOf } from "../lib/html.js";
+import { extractTableById, symbolNames, textOf } from "../lib/html.js";
 import type { DaySnapshot, QuoteRow } from "../types.js";
 
 export const TODAY_SHARE_PRICE_URL = "https://www.sharesansar.com/today-share-price";
@@ -405,8 +405,26 @@ export function parseBackfillDay(
   return null;
 }
 
-/** Fetches and parses the current session. */
-export async function fetchTodaySharePrice(): Promise<DaySnapshot> {
+/** One fetch of the daily page, read for everything it carries. */
+export interface FetchedSession {
+  /** The session's prices — what becomes the day's CSV. */
+  snapshot: DaySnapshot;
+  /**
+   * Company names by ticker, when the page carries them.
+   *
+   * Empty rather than an error when the links are absent: prices are the point, and a
+   * page that parses perfectly well should not fail over a name.
+   */
+  names: Map<string, string>;
+}
+
+/**
+ * Fetches the current session: its prices, and the company names the page links to.
+ *
+ * Both come from one request because they come from one page, and because they are read
+ * at the same moment — the names belong to the session the prices are from.
+ */
+export async function fetchTodaySession(): Promise<FetchedSession> {
   const response = await fetch(TODAY_SHARE_PRICE_URL, {
     headers: { "user-agent": USER_AGENT, accept: "text/html" },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -416,5 +434,10 @@ export async function fetchTodaySharePrice(): Promise<DaySnapshot> {
     throw new Error(`ShareSansar returned ${response.status} ${response.statusText}`);
   }
 
-  return parseTodaySharePrice(await response.text());
+  const html = await response.text();
+
+  // The prices are parsed first, and deliberately: if the page has changed shape, that is
+  // the failure worth reporting, and it throws here rather than being masked by a name
+  // lookup that quietly returned nothing.
+  return { snapshot: parseTodaySharePrice(html), names: symbolNames(html) };
 }

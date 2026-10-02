@@ -91,6 +91,54 @@ function findTableEnd(html: string, from: number): number {
 }
 
 /**
+ * Company names by ticker, read from the links in the price table.
+ *
+ * ## Why the name is worth the trouble
+ *
+ * The archive stores tickers, because eight columns of market data have no room for a
+ * company name and the format is the one thing here that is expensive to change. But a
+ * ticker alone is poor to read: `NABIL` tells a person less than "Nepal Arab Bank". The
+ * name is in the page — each symbol links to its company page and carries the full name
+ * in a `title` attribute — so it is read here and published beside the archive as its own
+ * small file, rather than by adding a ninth column to three thousand existing files.
+ *
+ * ## Why this is a separate scan rather than part of the table reader
+ *
+ * The table reader deliberately returns *text*, because the price columns are text. Names
+ * live in an attribute, which that reader throws away by design. Scanning for them
+ * separately keeps the price path untouched — the thing that must not break — and means a
+ * page with no links at all still parses perfectly well, just without names.
+ *
+ * Attribute order is not guaranteed, so `href` and `title` are looked for anywhere in the
+ * tag rather than through one fixed pattern; a reorder would otherwise silently produce an
+ * empty map.
+ */
+export function symbolNames(html: string): Map<string, string> {
+  const names = new Map<string, string>();
+
+  for (const match of html.matchAll(/<a\b[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const tag = match[0];
+
+    // Only the links that point at a company page carry a name. The table has other
+    // anchors, and taking their titles would file menu labels as company names.
+    if (!/href\s*=\s*["'][^"']*\/company\//i.test(tag)) continue;
+
+    const title = /title\s*=\s*"([^"]*)"/i.exec(tag)?.[1] ?? /title\s*=\s*'([^']*)'/i.exec(tag)?.[1];
+    if (title === undefined) continue;
+
+    const symbol = textOf(match[1] ?? "").trim().toUpperCase();
+    const name = decodeEntities(title).replace(/\s+/g, " ").trim();
+
+    if (symbol === "" || name === "") continue;
+    // First wins: the table is the authority, and a later duplicate would be a link in a
+    // sidebar or a footer.
+    if (!names.has(symbol)) names.set(symbol, name);
+  }
+
+  return names;
+}
+
+/**
  * Rows of cell text from the table carrying `id`, or `null` when no such table exists.
  *
  * `null` rather than `[]` on purpose: "the table is gone" and "the table is empty" are
