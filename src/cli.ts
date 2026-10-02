@@ -37,7 +37,8 @@ import { isRealDay, kathmanduToday, previousDay } from "./lib/dates.js";
 import { MANIFEST_PATH, SESSIONS_PATH, writeManifest, writeSessionsIndex } from "./lib/manifest.js";
 import { snapshotPath } from "./lib/paths.js";
 import { snapshotToCsv } from "./lib/serialize.js";
-import { MIN_HISTORICAL_ROWS, fetchTodaySharePrice } from "./sources/sharesansar.js";
+import { SYMBOLS_PATH, mergeSymbols } from "./lib/symbols.js";
+import { MIN_HISTORICAL_ROWS, fetchTodaySession } from "./sources/sharesansar.js";
 import { createPriceSession } from "./sources/sharesansar-session.js";
 import type { DaySnapshot } from "./types.js";
 
@@ -80,7 +81,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function scrapeCommand(dryRun: boolean): Promise<number> {
-  const snapshot = await fetchTodaySharePrice();
+  const { snapshot, names } = await fetchTodaySession();
   const csv = snapshotToCsv(snapshot);
   const relative = snapshotPath(snapshot.date);
 
@@ -106,9 +107,16 @@ async function scrapeCommand(dryRun: boolean): Promise<number> {
   // what makes a holiday a no-op. See the note in `lib/manifest.ts` about timestamps.
   const manifest = await writeManifest(REPO_ROOT);
   const dates = await writeSessionsIndex(REPO_ROOT);
+  // Merged rather than rebuilt — a name cannot be recovered from the archive, so this is
+  // the one index that accumulates. See `lib/symbols.ts`.
+  const directory = await mergeSymbols(REPO_ROOT, names, snapshot.date);
   console.log(
     `Index   ${MANIFEST_PATH} + ${SESSIONS_PATH} — latest ${manifest.latest ?? "none"}, ` +
       `${dates.length} session dates`,
+  );
+  console.log(
+    `        ${SYMBOLS_PATH} — ${Object.keys(directory).length} tickers, ` +
+      `${names.size} seen today`,
   );
 
   if (outcome === "unchanged") {
