@@ -52,6 +52,28 @@ function fragment(date: string, count: number): string {
   );
 }
 
+/**
+ * A dated fragment whose one scrip is listed `copies` times, every copy carrying the same
+ * figures.
+ *
+ * This is a shape the dated route really returns: 2012-10-01 lists all 91 of its scrips
+ * twice, identically, and 2011-11-29 lists ADBL three times.
+ */
+function aliasedFragment(date: string, copies: number): string {
+  const tag = date.slice(5).replace("-", "");
+  const times = Array.from(
+    { length: copies },
+    () =>
+      `<tr><td>1</td><td>S${tag}</td>` +
+      `<td>1</td><td>2</td><td>1</td><td>2</td><td>3</td><td>4</td></tr>`,
+  ).join("");
+
+  return (
+    `<h5>As of : <span class="text-org">${date}</span></h5>` +
+    `<table id="headFixed"><thead>${HEADER}</thead><tbody>${times}</tbody></table>`
+  );
+}
+
 /** A dated fragment for a day the market did not trade. */
 function closedFragment(date: string): string {
   return (
@@ -455,5 +477,75 @@ describe("formatSummary", () => {
     expect(formatSummary(summary, options)).toContain(
       "pnpm backfill --from 2024-06-10 --to 2024-06-10 --min-rows 3",
     );
+  });
+});
+
+describe("a scrip the source lists more than once", () => {
+  it("collapses identical repeats, archives the day, and says so", async () => {
+    const test = harness({
+      responses: new Map([["2024-06-10", aliasedFragment("2024-06-10", 3)]]),
+    });
+    const options: BackfillOptions = { ...baseOptions, to: "2024-06-10" };
+
+    const summary = await runBackfill(options, test.deps);
+
+    expect(summary.archived).toEqual([{ date: "2024-06-10", rows: 1 }]);
+    expect(summary.collapsed).toEqual([{ date: "2024-06-10", duplicates: 2 }]);
+    // Reported, not swallowed: the run says so, and the summary keeps saying so after.
+    expect(test.logs.join("\n")).toContain("2024-06-10  collapsed  2 identical duplicate");
+    expect(formatSummary(summary, options)).toContain("2 duplicate row(s) collapsed");
+    expect(formatSummary(summary, options)).toContain("collapsed   1 days");
+    // The day was archived, so it is accounted for and must not leave the sweep red.
+    expect(exitCodeFor(summary)).toBe(0);
+  });
+
+  it("does not report a collapse for a day it declined to archive", async () => {
+    // 2024-06-10's content, served again under 2024-06-11. The repeat guard refuses that
+    // day, so nothing is archived — and reporting a collapse for it as well would describe
+    // the same day twice, for opposite reasons.
+    const rows = [
+      { symbol: "S0611", open: 1, high: 2, low: 1, close: 2, volume: 3, turnover: 4 },
+    ];
+    const test = harness({
+      archivedContent: new Map([
+        ["2024-06-10", snapshotToCsv({ date: "2024-06-10", rows })],
+      ]),
+      responses: new Map([["2024-06-11", aliasedFragment("2024-06-11", 2)]]),
+    });
+    const options: BackfillOptions = { ...baseOptions, from: "2024-06-10", to: "2024-06-11" };
+
+    const summary = await runBackfill(options, test.deps);
+
+    expect(summary.skipped).toEqual(["2024-06-10"]);
+    expect(summary.repeated.map((entry) => entry.date)).toEqual(["2024-06-11"]);
+    expect(summary.collapsed).toEqual([]);
+    expect(test.written).toHaveLength(0);
+  });
+
+  it("still fails a day whose repeats disagree, without stopping the sweep", async () => {
+    // The two rows make different claims about one session, which nothing may resolve by
+    // choosing. The day fails; the next one is still fetched and archived.
+    const conflicting =
+      `<h5>As of : <span class="text-org">2024-06-11</span></h5>` +
+      `<table id="headFixed"><thead>${HEADER}</thead><tbody>` +
+      `<tr><td>1</td><td>SBAD</td><td>1</td><td>2</td><td>1</td><td>2</td><td>3</td><td>4</td></tr>` +
+      `<tr><td>2</td><td>SBAD</td><td>9</td><td>2</td><td>1</td><td>2</td><td>3</td><td>4</td></tr>` +
+      `</tbody></table>`;
+
+    const test = harness({
+      responses: new Map<string, string | Error>([
+        ["2024-06-11", conflicting],
+        ["2024-06-12", fragment("2024-06-12", 2)],
+      ]),
+    });
+    const options: BackfillOptions = { ...baseOptions, from: "2024-06-11", to: "2024-06-12" };
+
+    const summary = await runBackfill(options, test.deps);
+
+    expect(summary.collapsed).toEqual([]);
+    expect(summary.failed.map((entry) => entry.date)).toEqual(["2024-06-11"]);
+    expect(summary.failed[0]?.message).toMatch(/appears twice/);
+    expect(summary.archived).toEqual([{ date: "2024-06-12", rows: 2 }]);
+    expect(exitCodeFor(summary)).toBe(1);
   });
 });
