@@ -57,6 +57,7 @@ import {
   formatElapsed,
 } from "./lib/readiness.js";
 import { snapshotToCsv } from "./lib/serialize.js";
+import { SERIES_DIRECTORY, writeSeries } from "./lib/series.js";
 import { SYMBOLS_PATH, mergeSymbols } from "./lib/symbols.js";
 import { MIN_HISTORICAL_ROWS, fetchTodaySession } from "./sources/sharesansar.js";
 import { createPriceSession } from "./sources/sharesansar-session.js";
@@ -94,6 +95,10 @@ const USAGE = `Usage: nepse-data <command> [options]
     --to YYYY-MM-DD     Last day, inclusive (default: yesterday in Kathmandu).
     --min-rows N        Refuse a session with fewer scrips (default ${MIN_HISTORICAL_ROWS}).
     --dry-run           Parse and report without writing anything.
+
+  series                Rebuild data/series/ — one file per ticker, from the archive.
+                        No network: it reads data/daily/ and rewrites what changed.
+    --dry-run           Report what would change without writing anything.
 `;
 
 /** A mistake in how the command was called, as opposed to a failure while running. */
@@ -314,6 +319,10 @@ const SCRAPE_FLAGS: Record<string, FlagKind> = {
   "--dry-run": "boolean",
 };
 
+const SERIES_FLAGS: Record<string, FlagKind> = {
+  "--dry-run": "boolean",
+};
+
 /**
  * A fraction between 0 and 1.
  *
@@ -433,6 +442,35 @@ async function backfillCommand(argv: readonly string[]): Promise<number> {
   return exitCodeFor(summary);
 }
 
+/**
+ * Rebuilds `data/series/` from the archive. No network, no source, no options to get wrong.
+ *
+ * It lives in the daily job rather than in a workflow of its own so that the index is
+ * never behind the archive: the run that writes a session also writes the series file that
+ * contains it. That also means a day the market did not trade rewrites nothing, because
+ * every file's bytes are compared before it is written.
+ */
+async function seriesCommand(dryRun: boolean): Promise<number> {
+  const started = Date.now();
+  const outcome = await writeSeries(REPO_ROOT, { dryRun });
+
+  console.log(`Series  ${SERIES_DIRECTORY} — ${outcome.symbols} tickers, ${outcome.rows} rows`);
+  console.log(
+    `        ${outcome.written} ${dryRun ? "to write" : "written"}, ${outcome.unchanged} ` +
+      `already current, in ${formatElapsed(Date.now() - started)}`,
+  );
+
+  if (outcome.escaped.length > 0) {
+    // Said out loud because these are the tickers whose file name is not their ticker, and
+    // the list is short enough to check by eye.
+    const shown = outcome.escaped.slice(0, 8).join(", ");
+    const rest = outcome.escaped.length > 8 ? `, and ${outcome.escaped.length - 8} more` : "";
+    console.log(`        ${outcome.escaped.length} escaped names: ${shown}${rest}`);
+  }
+
+  return 0;
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   const command = argv[0];
 
@@ -458,6 +496,8 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     case "backfill":
       return backfillCommand(argv.slice(1));
+    case "series":
+      return seriesCommand(parseFlags(argv.slice(1), SERIES_FLAGS).flags.has("--dry-run"));
     default:
       console.error(`Unknown command "${command}".\n\n${USAGE}`);
       return 2;
