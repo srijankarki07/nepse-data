@@ -24,20 +24,35 @@ on another person's dataset being maintained.
 data/latest.json                  the index. Read this first
 data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
                                   3,600 files across 16 years, 38 MB in total
+data/series/NABIL.csv             one file per ticker, its whole history, ~34 MB in total
 src/                              the scraper and the CLI
 tests/                            including real captured responses as fixtures
 .github/workflows/daily.yml       fetches and commits, every trading day
 .github/workflows/backfill.yml    fills in the past, dispatched by hand
 ```
 
-**Daily files, not per-symbol files.** One file holds every scrip the source listed that
-session, written once and never touched again.
+**Daily files are the record; `data/series/` is an index over them.** A daily file holds
+every scrip the source listed that session, written once and never touched again. The
+series files invert that, so a consumer that wants one scrip across every session reads one
+file instead of one per trading day: measured against the package that reads this archive,
+a year of one scrip costs **231 requests and 4.13 MB** through the daily files and **one
+request and ~11 KB** through a series file.
 
-The obvious alternative (a file per ticker, appended to daily) is how the community
-repositories this replaces reached several hundred megabytes. Every commit rewrites
-every file, so git stores a full new copy of each one and the history grows with the
-*archive* rather than with the data. A daily file costs a small fraction of that, and its
-diff is always one file.
+The series files are **derived**, rebuilt from `data/daily/` by `pnpm series` on every run
+and written only where the bytes changed. So they cannot drift from the archive, and a
+holiday still commits nothing.
+
+They are also the one place the layout costs something. A per-symbol layout rewrites
+several hundred files per commit instead of one, measured at **37.5 KB of `.git` per day
+against 8.2 KB** for a daily file, about 9.4 MB a year, which is worth paying for what it
+buys. What it does cost is reviewability: the daily data commit now touches several hundred
+files, so its diff is no longer readable line by line.
+
+> **The file name is not always the ticker.** Fourteen of them contain a slash, because the
+> source names a debenture for the two years it covers (`GBILD86/87`), and a slash is a
+> directory separator. Those are written as `data/series/GBILD86-87.csv`. The rule is that
+> every run of characters outside `A-Za-z0-9` becomes one `-`, and the ticker inside the
+> file is unchanged.
 
 Directories are nested by year because a single one would hold several thousand files
 within a decade.
@@ -179,6 +194,9 @@ pnpm scrape --wait 25 --confirm 60
 
 pnpm backfill --from 2024-06-10 --to 2024-06-14 --dry-run   # look before writing
 pnpm backfill --from 2011-01-01                              # to yesterday, by default
+
+pnpm series:dry   # rebuild data/series/ and report, write nothing
+pnpm series       # rebuild it for real; reads data/daily/, never the network
 ```
 
 ## Backfilling history

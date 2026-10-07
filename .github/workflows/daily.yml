@@ -151,6 +151,16 @@ jobs:
         run: |
           pnpm scrape --wait "${WAIT:-0}" --confirm "${CONFIRM:-60}"
 
+      - name: Rebuild the per-symbol index
+        # Derived from data/daily/, so it runs after the write and before the commit: the
+        # run that archives a session also indexes it, and the index can never be a day
+        # behind the archive.
+        #
+        # No network. It reads the sessions on disk and rewrites only the files whose bytes
+        # changed, which is what keeps this cheap and — more importantly — what keeps a
+        # holiday a no-op: nothing changes, so the step below still commits nothing.
+        run: pnpm series
+
       - name: Commit if anything changed
         id: commit
         run: |
