@@ -116,6 +116,13 @@ jobs:
 
             echo "::endgroup::"
 
+            # The per-symbol index is derived from data/daily/, so a year of sessions
+            # without this would leave it missing that year — and the committed index is
+            # asserted to match a rebuild, so the next CI run would fail rather than the
+            # omission reaching a consumer. Inside the loop, not after it, because the year
+            # is committed here.
+            pnpm series
+
             # Committed per year so an interrupted run keeps the years it finished.
             git add data
 
