@@ -10,3 +10,8 @@ data/**/*.tmp
 # Wrangler's local state, left behind by `wrangler dev` in ops/dispatch. It holds a build
 # cache, and on some versions a local secrets store. None of it belongs in the repo.
 .wrangler/
+
+# The token `wrangler dev` reads locally, which is the one place the PAT exists in a file
+# rather than in Cloudflare's secret store. This repository is public, so a stray
+# `git add -A` here would publish a token that can start workflow runs.
+.dev.vars
