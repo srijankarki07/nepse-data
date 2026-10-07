@@ -115,9 +115,45 @@ losing the property that a non-trading day is a no-op.
 
 ## How it runs
 
-`.github/workflows/daily.yml`, at **10:15 UTC** (16:00 in Kathmandu, an hour after the
-close), **every day**. It installs, typechecks, tests, fetches, and commits if the file
-changed.
+A session appears **within half an hour of the close**. NEPSE closes at 15:00 Kathmandu
+(09:15 UTC), and the target is 09:45 UTC.
+
+Two triggers, because one of them cannot make that promise and the other is not allowed to
+be a single point of failure:
+
+| Trigger | Fires | Waits | Role |
+| --- | --- | --- | --- |
+| Cloudflare Worker cron (`ops/dispatch/`) | 09:20 UTC | up to 25 min | the punctual one |
+| `daily.yml` `schedule` | 10:15 and 14:30 UTC | reads once | the backstop |
+
+**GitHub's own schedule is the backstop, not the trigger, and that is a measured decision.**
+Over the six sessions from 2026-10-01 it fired between **4h28m and 9h02m late**, and on
+2026-10-02 it did not fire at all. The 2026-10-05 session was committed at 01:02 the next
+morning. `created_at == run_started_at` on each of those runs, so GitHub was queueing the
+event, not waiting for a runner. A `workflow_dispatch` starts immediately, so the Worker
+exists to press that button on time; the cron stays for the day the Worker is broken, its
+token has expired, or Cloudflare is down.
+
+**The job waits for the session rather than running at a chosen hour.** The fetch polls the
+source until the session appears, so nothing has to guess when the source publishes, and a
+session that lands at 09:31 is archived at 09:31. Two things guard what is written:
+
+- **It must hold still.** After the page first reports the session, it is read again a
+  minute later and the two readings must agree, compared as CSV. A table that is still
+  being filled in is never archived. A page that will not settle is a failed run, not a
+  written day. See `src/lib/readiness.ts`.
+- **It must be big enough.** A session with fewer than half the scrips of the newest
+  archived one is refused. Byte-stability alone cannot catch a table that stopped changing
+  before it finished arriving, and the row floor of 50 is calibrated against a truncated
+  response rather than a half-published market. The floor is set from the archive's own
+  numbers: across the 177 sessions of 2026 the thinnest is 261 rows against 329 the day
+  before, so 0.5 clears every real session by 29 points. `--min-completeness 0` overrides
+  it.
+
+The backstop passes `--wait 0`, so a GitHub-timed run reads once and decides instead of
+sitting on a runner for half an hour. A run that starts late still archives the right day:
+the loop waits for the session the *source* is showing, never for "today" as the runner's
+clock sees it. That is what let the 01:02 case above recover its day rather than miss it.
 
 **Every day, rather than on trading days, because the trading week is not fixed.** The
 archive itself shows it changing: Sunday-to-Thursday sessions run from 2011 until 5 April
@@ -136,6 +172,10 @@ pnpm install
 pnpm scrape:dry   # fetch and report, write nothing
 pnpm scrape       # fetch and write data/daily/<year>/<date>.csv
 pnpm test
+
+# What the punctual trigger runs: wait up to 25 minutes for the session, and only write
+# it once two reads a minute apart agree.
+pnpm scrape --wait 25 --confirm 60
 
 pnpm backfill --from 2024-06-10 --to 2024-06-14 --dry-run   # look before writing
 pnpm backfill --from 2011-01-01                              # to yesterday, by default

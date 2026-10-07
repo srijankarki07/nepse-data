@@ -89,15 +89,28 @@ Everything below was checked by running it, not by reading it.
 - **Never run on a non-trading day in the daily job.** The no-op follows from the source
   reporting the previous session, and idempotency was verified, but not across a real
   holiday, because the archive has not yet been left alone for one.
-- **The daily schedule is not punctual, and cannot be relied on.** It has fired exactly
-  once: `2026-10-01`, committed by `github-actions[bot]` at **17:00:56Z — 6h45m after its
-  10:15Z slot**. On `2026-10-02` it did not fire at all, and the session was committed only
-  because the workflow was dispatched by hand. GitHub *queues* `schedule` events rather than
-  firing them on time, and once load is high enough it drops them, leaving nothing on the
-  Actions page to show for it. The data is not at risk — a late run archives the same bytes,
-  because a session's figures are frozen after the close — but "every day at 16:00 Kathmandu"
-  is a description, not a guarantee. If a day must never pass without an attempt, the
-  schedule needs an external trigger.
+- **The daily schedule is not punctual, and cannot be relied on.** Measured, not suspected.
+  Every run from `2026-10-01` to `2026-10-06` was late by **4h28m to 9h02m**, and
+  `created_at == run_started_at` on each, so GitHub was *queueing* the event, not making a
+  runner wait for a machine. `2026-10-02` never fired, and the session was committed only
+  because the workflow was dispatched by hand; `2026-10-05` was committed at **01:02
+  Kathmandu the next morning**. At 20:05 Kathmandu on `2026-10-07` the schedule had still
+  not fired at all, and that day was missing from the archive.
+
+  **Addressed, on `2026-10-07`.** A Cloudflare Worker cron (`ops/dispatch/`) now dispatches
+  the workflow at 09:20 UTC, which is five minutes after the close; the GitHub schedule
+  stays as a backstop at 10:15 and 14:30 UTC. The job itself was changed from "run an hour
+  after the close" to "wait for the session" (`src/lib/readiness.ts`), with a settle gate
+  and a completeness floor. The residual risk is the token: an expired PAT degrades
+  silently to the backstop, which is late. That is why `daily.yml` fails the run when it is
+  the one that has to archive a session more than 45 minutes after its close, and that
+  failure is the alarm.
+
+- **No session has yet been committed by the Worker.** Everything above was verified by
+  running the pieces (the CLI against the live page, the readiness loop against injected
+  deps), but the end-to-end path (Cloudflare tick → dispatch → commit before 09:45 UTC) has
+  not completed a real cycle, because it was wired up after the `2026-10-07` close. The
+  first trading day after that is the real test.
 - **No adjustment for bonus shares, rights or splits**, deliberately. See the README.
 
 The two things this section previously worried about, whether a runner can reach the
@@ -292,8 +305,14 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 - **`--to` never reaches today.** A session that has not closed yet is still changing, and
   the daily job would later rewrite it: the one thing the append-only rule prevents.
   Today belongs to `scrape`.
-- **The backfill shares the daily job's concurrency group**, so a sweep queues the 10:15
-  UTC daily run rather than racing it. A delayed daily run is visible; a lost one is not.
+- **The backfill shares the daily job's concurrency group**, so a sweep queues the daily
+  run rather than racing it. A delayed daily run is visible; a lost one is not. The cost is
+  now sharper than it was: GitHub keeps one running and one *pending* run per group, and a
+  newly queued run evicts the pending one. So a backfill in progress at 09:20 can push the
+  punctual run to pending, where the 10:15 backstop then cancels it. The survivor does the
+  same work, but the half-hour promise breaks for that day and a cancelled run notifies
+  nobody. Acceptable only because backfills are hand-dispatched and rare; `queue: max` on
+  both workflows is the fix if it ever stops being rare.
 - **A refused day makes the run red.** Unresolved is loud here, and the report prints the
   exact `--min-rows` re-run that would fix it.
 
@@ -301,9 +320,13 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
 
 ## Roadmap
 
-1. **Let the schedule prove itself.** The sweep is done and the daily job has been
-   dispatched by hand, but nothing has yet been committed by the *timer*. Leave it a week
-   and confirm the archive grew by the right number of sessions.
+1. **Deploy the Worker and watch one full cycle.** `ops/dispatch/README.md` has the steps.
+   The workflow change has to be on `main` first, because GitHub rejects a dispatch
+   carrying an input the workflow does not declare. Then confirm, on the next trading day,
+   that a `workflow_dispatch` run appears at ~09:20 UTC and that the session is committed
+   before 09:45. Log the token's expiry date while you are there: an expired PAT degrades
+   silently to the unpunctual backstop, and the `daily.yml` latency alarm is the only thing
+   that says so.
 2. ~~Run the real sweep.~~ Done: 5,752 days, 3,600 sessions, 38 MB, five days unresolved
    and all seven the source's. Re-running any range is cheap, archived days are skipped
    without a request, so a fresh sweep is a safe way to pick up anything the source adds
