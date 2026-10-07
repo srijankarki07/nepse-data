@@ -293,8 +293,16 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
   differ every day (including every holiday) and the daily job would commit a change
   daily, losing the no-op property. Freshness is `latest`, which moves only with the
   market.
-- **One file per session, not one per scrip.** Per-symbol files rewritten daily is how
-  the community repositories reached several hundred MB.
+- **One file per session as the record, plus a derived per-scrip index.** The earlier
+  answer here was per-session files and nothing else, on the grounds that per-symbol files
+  rewritten daily are how the community repositories reached several hundred MB. That was
+  measured before it was overruled, over thirty simulated daily commits: **37.5 KB of
+  `.git` per commit against 8.2 KB**, so about 9.4 MB a year rather than hundreds. What the
+  measurement did confirm is the review cost, because a daily commit now touches several
+  hundred files instead of one. It buys a year of one scrip going from 231 requests and
+  4.13 MB to one request of ~11 KB, for every consumer of the package and with no change on
+  their side. `data/series/` is rebuilt from `data/daily/` on every run so that it cannot
+  drift, and written only where the bytes changed so that a holiday still commits nothing.
 - **Eight columns.** The source publishes twenty-four; the rest are derived on the page.
 - **The date comes from the page's own heading**, never the clock.
 - **A missing value is an empty field**, never `0`.
@@ -355,7 +363,14 @@ Worth doing both runs together, because they exercise the same seam.
 | --- | --- | --- |
 | `backend` | `docs/portfolio-reference` | 5 stacked local commits. `test:cov` green, 1000 tests |
 | `bachat-khata` | `35-feat-portfolio` | 1 local commit. 168 tests, build green |
-| `nepse-data` | `main` | This repository. 3,600 sessions backfilled 2011 → today; 136 tests |
+| `nepse-data` | `main` | This repository. 3,600 sessions backfilled 2011 → today; 176 tests |
+
+`nepse-client` (the published `@srijankarki44/nepse-data` package, 0.2.0) reads this
+repository over jsDelivr. Its `history()` prefers `data/series/<TICKER>.csv` and falls back
+to walking `data/daily/` when a series file is absent, so publishing the index is what turns
+a year of one scrip from 231 requests into one, with no change on the consumer's side. It
+builds those paths with the same rule `series.ts` uses, and a test there asserts the two
+agree, so if either side's naming changes, that test is what fails.
 
 The backend's `docs/features/portfolio.md` has a **"Trying it against a real statement"**
 runbook, the sequence for the first live run, what each step should show, and the two
