@@ -25,28 +25,38 @@ data/latest.json                  the index. Read this first
 data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
                                   3,600 files across 16 years, 38 MB in total
 data/series/NABIL.csv             one file per ticker, its whole history, ~34 MB in total
+data/closes/2025.csv              one file per year, every ticker's close, ~3.5 MB in total
 src/                              the scraper and the CLI
 tests/                            including real captured responses as fixtures
 .github/workflows/daily.yml       fetches and commits, every trading day
 .github/workflows/backfill.yml    fills in the past, dispatched by hand
 ```
 
-**Daily files are the record; `data/series/` is an index over them.** A daily file holds
-every scrip the source listed that session, written once and never touched again. The
-series files invert that, so a consumer that wants one scrip across every session reads one
-file instead of one per trading day: measured against the package that reads this archive,
-a year of one scrip costs **231 requests and 4.13 MB** through the daily files and **one
-request and ~11 KB** through a series file.
+**Daily files are the record. `data/series/` and `data/closes/` are indexes over them**, and
+they answer opposite questions.
 
-The series files are **derived**, rebuilt from `data/daily/` by `pnpm series` on every run
-and written only where the bytes changed. So they cannot drift from the archive, and a
-holiday still commits nothing.
+A consumer that wants **one scrip across every session** reads a series file instead of one
+file per trading day: measured against the package that reads this archive, a year of one scrip
+costs **231 requests and 4.13 MB** through the daily files and **one request** through a series
+file.
 
-They are also the one place the layout costs something. A per-symbol layout rewrites
-several hundred files per commit instead of one, measured at **37.5 KB of `.git` per day
-against 8.2 KB** for a daily file, about 9.4 MB a year, which is worth paying for what it
-buys. What it does cost is reviewability: the daily data commit now touches several hundred
-files, so its diff is no longer readable line by line.
+A consumer that wants **every scrip across a year** reads a closes file. It is wide where the
+others are long, one row per date and one column per ticker, which is what makes a year of the
+whole market fit in 450 KB. Measured over a year, against the same package: **232 requests and
+4.13 MB become 2 requests and 790 KB**, and the two paths agree cell for cell on all 78,064
+`(date, scrip, close)` values they hold. This is the shape a market index needs, because the
+arithmetic is a mean of each scrip's day-on-day ratio.
+
+Both are **derived**, rebuilt from `data/daily/` by `pnpm index` on every run and written only
+where the bytes changed. So they cannot drift from the archive, and a holiday still commits
+nothing.
+
+The per-symbol index is also the one place the layout costs something. It rewrites several
+hundred files per commit instead of one, measured at **37.5 KB of `.git` per day against
+8.2 KB** for a daily file, about 9.4 MB a year, which is worth paying for what it buys. What it
+does cost is reviewability: the daily data commit now touches several hundred files, so its
+diff is no longer readable line by line. The per-year files cost almost nothing by comparison:
+one file a day, 2.4 KB of `.git` per commit.
 
 > **The file name is not always the ticker.** Fourteen of them contain a slash, because the
 > source names a debenture for the two years it covers (`GBILD86/87`), and a slash is a
@@ -195,8 +205,8 @@ pnpm scrape --wait 25 --confirm 60
 pnpm backfill --from 2024-06-10 --to 2024-06-14 --dry-run   # look before writing
 pnpm backfill --from 2011-01-01                              # to yesterday, by default
 
-pnpm series:dry   # rebuild data/series/ and report, write nothing
-pnpm series       # rebuild it for real; reads data/daily/, never the network
+pnpm index:dry   # rebuild the derived indexes and report, write nothing
+pnpm index       # rebuild them for real; reads data/daily/, never the network
 ```
 
 ## Backfilling history

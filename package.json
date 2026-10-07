@@ -11,8 +11,8 @@
     "scrape": "tsx src/cli.ts scrape",
     "scrape:dry": "tsx src/cli.ts scrape --dry-run",
     "backfill": "tsx src/cli.ts backfill",
-    "series": "tsx src/cli.ts series",
-    "series:dry": "tsx src/cli.ts series --dry-run",
+    "index": "tsx src/cli.ts index",
+    "index:dry": "tsx src/cli.ts index --dry-run",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

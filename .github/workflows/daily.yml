@@ -159,7 +159,7 @@ jobs:
         # No network. It reads the sessions on disk and rewrites only the files whose bytes
         # changed, which is what keeps this cheap and — more importantly — what keeps a
         # holiday a no-op: nothing changes, so the step below still commits nothing.
-        run: pnpm series
+        run: pnpm index
 
       - name: Commit if anything changed
         id: commit
