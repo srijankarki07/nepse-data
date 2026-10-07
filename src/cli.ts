@@ -7,6 +7,14 @@
  * `backfill` fetches past sessions, one request per calendar day, for the history the
  * archive would otherwise only begin accumulating today. See `backfill.ts`.
  *
+ * ## `scrape` can be told to wait for the session instead of assuming it
+ *
+ * `--wait N` gives it a budget in minutes and it polls the source until the day's session
+ * appears, which is what lets the punctual trigger fire at the close rather than an hour
+ * after it. `--confirm N` makes it read twice before writing, and `--min-completeness`
+ * refuses a session too small to be a full one. All three are off or harmless by default,
+ * so an unadorned `pnpm scrape` behaves as it always has. See `lib/readiness.ts`.
+ *
  * ## Running `scrape` twice in a day does nothing
  *
  * The file is compared before it is written, and an identical one is left alone. That
@@ -34,8 +42,20 @@ import {
 } from "./backfill.js";
 import { archivedCsv, writeSnapshot } from "./lib/archive.js";
 import { isRealDay, kathmanduToday, previousDay } from "./lib/dates.js";
-import { MANIFEST_PATH, SESSIONS_PATH, writeManifest, writeSessionsIndex } from "./lib/manifest.js";
+import {
+  MANIFEST_PATH,
+  SESSIONS_PATH,
+  buildManifest,
+  writeManifest,
+  writeSessionsIndex,
+} from "./lib/manifest.js";
 import { snapshotPath } from "./lib/paths.js";
+import {
+  MIN_COMPLETENESS,
+  POLL_INTERVAL_MS,
+  awaitSession,
+  formatElapsed,
+} from "./lib/readiness.js";
 import { snapshotToCsv } from "./lib/serialize.js";
 import { SYMBOLS_PATH, mergeSymbols } from "./lib/symbols.js";
 import { MIN_HISTORICAL_ROWS, fetchTodaySession } from "./sources/sharesansar.js";
@@ -59,6 +79,14 @@ const REPO_ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const USAGE = `Usage: nepse-data <command> [options]
 
   scrape                Fetch the current session and write it to data/daily/.
+    --wait N            Wait up to N minutes for today's session to appear
+                        (default 0). A closed day spends the whole budget polling.
+    --confirm N         Read again N seconds later and write only if the bytes match,
+                        so a table that is still filling in is never archived
+                        (default 60; 0 trusts the first reading).
+    --min-completeness R
+                        Refuse a session with fewer than this fraction of the newest
+                        archived session's scrips (default ${MIN_COMPLETENESS}; 0 disables).
     --dry-run           Parse and report without writing anything.
 
   backfill              Fetch past sessions; one request per calendar day.
@@ -80,8 +108,99 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function scrapeCommand(dryRun: boolean): Promise<number> {
-  const { snapshot, names } = await fetchTodaySession();
+/**
+ * How many scrips the newest archived session holds, or `null` when there is none.
+ *
+ * The yardstick the completeness floor measures against. Read from disk rather than from
+ * a fetch, because the thing a new session is being compared to is the archive, and
+ * because it is already there, so this costs no request.
+ *
+ * The count is the lines minus the header. The file is written CRLF-terminated, so the
+ * trailing newline would otherwise be counted as a scrip.
+ */
+async function archivedRowCount(root: string, latest: string | null): Promise<number | null> {
+  if (latest === null) return null;
+
+  const csv = await archivedCsv(root, latest);
+  if (csv === null) return null;
+
+  return csv.split(/\r?\n/).filter((line) => line !== "").length - 1;
+}
+
+async function scrapeCommand(
+  dryRun: boolean,
+  waitMinutes: number,
+  confirmSeconds: number,
+  minCompleteness: number,
+): Promise<number> {
+  // Kathmandu's today, because the session being waited for is the one the exchange is
+  // trading today. This decides only what we are willing to *wait for*; what the page
+  // actually reports is what gets archived. See the note in `lib/dates.ts`.
+  const target = kathmanduToday();
+
+  // Read once, before the loop. The archive cannot move underneath a run, because the
+  // concurrency group serialises writers, and it serves as both the completeness yardstick
+  // and the floor that catches a source going backwards.
+  const newest = (await buildManifest(REPO_ROOT)).latest;
+
+  const readiness = await awaitSession(
+    {
+      target,
+      budgetMs: waitMinutes * 60_000,
+      intervalMs: POLL_INTERVAL_MS,
+      confirmMs: confirmSeconds * 1_000,
+      baselineRows: await archivedRowCount(REPO_ROOT, newest),
+      minCompleteness,
+    },
+    {
+      fetchSession: fetchTodaySession,
+      sleep,
+      now: () => Date.now(),
+      log: (line) => console.log(line),
+    },
+  );
+
+  if (readiness.kind === "unsettled") {
+    // The one outcome that must never be written. A table that will not hold still is not
+    // yet a session, and a day, once in the archive, is a historical record.
+    throw new Error(
+      `The source is still republishing the ${target} session after ` +
+        `${formatElapsed(readiness.waitedMs)}. Nothing was written. Re-run once it settles.`,
+    );
+  }
+
+  if (readiness.kind === "ready") {
+    console.log(
+      `Ready   ${target} after ${formatElapsed(readiness.waitedMs)} ` +
+        `(${readiness.attempts} ${readiness.attempts === 1 ? "poll" : "polls"}, ` +
+        `held still for ${confirmSeconds}s)`,
+    );
+  } else {
+    // Either the market was shut or the session has not been published yet, and from here
+    // they are the same observation: an older session, already archived, so the write
+    // below is a no-op and the run commits nothing.
+    console.log(
+      `Waited  ${formatElapsed(readiness.waitedMs)}: the source still reports ` +
+        `${readiness.session.snapshot.date}, so this is either a closed day or a session ` +
+        `that has not been published yet.`,
+    );
+  }
+
+  const { snapshot, names } = readiness.session;
+
+  // A source that has gone *backwards* is the one thing a date comparison can catch and a
+  // byte comparison cannot: the write below would find the old file identical and report a
+  // quiet no-op, which looks exactly like a closed market. It is not one: the archive
+  // already holds something newer. A source serving a stale session every day forever is
+  // a failure worth being woken for, not a silence worth keeping.
+  if (newest !== null && snapshot.date < newest) {
+    throw new Error(
+      `The source is reporting ${snapshot.date}, older than the newest archived session ` +
+        `(${newest}). Nothing was written: the source has gone backwards, which is not a ` +
+        `closed market. Check whether it is serving a stale cache before re-running.`,
+    );
+  }
+
   const csv = snapshotToCsv(snapshot);
   const relative = snapshotPath(snapshot.date);
 
@@ -188,6 +307,54 @@ const BACKFILL_FLAGS: Record<string, FlagKind> = {
   "--dry-run": "boolean",
 };
 
+const SCRAPE_FLAGS: Record<string, FlagKind> = {
+  "--wait": "value",
+  "--confirm": "value",
+  "--min-completeness": "value",
+  "--dry-run": "boolean",
+};
+
+/**
+ * A fraction between 0 and 1.
+ *
+ * `0` is allowed and means "no floor", matching `--min-rows 1`: it is the documented way
+ * to overrule a refusal for a day that genuinely traded thin. Above 1 is refused rather
+ * than treated as a percentage, because `--min-completeness 80` silently meaning "8000%"
+ * would refuse every session there will ever be.
+ */
+function parseCompleteness(raw: string): number {
+  if (!/^\d+(\.\d+)?$/.test(raw)) {
+    throw new UsageError(`--min-completeness "${raw}" is not a number between 0 and 1.`);
+  }
+
+  const value = Number(raw);
+  if (value > 1) {
+    throw new UsageError(`--min-completeness must be between 0 and 1, not ${value}.`);
+  }
+
+  return value;
+}
+
+/**
+ * A whole number of units, bounded.
+ *
+ * Bounded because both of these are waits, and a wait has no natural ceiling: a typo in
+ * `--wait` would hold a runner until the job's own timeout killed it, which reports as a
+ * cancelled run rather than as the mistake it is. The ceilings are well clear of any
+ * sensible value: 45 minutes is the longest wait the workflow asks for, and a confirm
+ * longer than a few minutes means the gate is misconfigured rather than patient.
+ */
+function parseCount(name: string, raw: string, max: number, unit: string): number {
+  if (!/^\d+$/.test(raw)) {
+    throw new UsageError(`${name} "${raw}" is not a whole number of ${unit}.`);
+  }
+
+  const value = Number(raw);
+  if (value > max) throw new UsageError(`${name} must be at most ${max} ${unit}.`);
+
+  return value;
+}
+
 function parseMinRows(raw: string): number {
   // `--min-rows 1` is allowed on purpose: it is the documented way to archive a day that
   // was refused for being small, which is the one case where an operator needs to
@@ -276,8 +443,18 @@ async function main(argv: readonly string[]): Promise<number> {
 
   switch (command) {
     case "scrape": {
-      const { flags } = parseFlags(argv.slice(1), { "--dry-run": "boolean" });
-      return scrapeCommand(flags.has("--dry-run"));
+      const { values, flags } = parseFlags(argv.slice(1), SCRAPE_FLAGS);
+
+      // The defaults live here rather than in the workflow, so that a manual `pnpm scrape`
+      // and a dispatched run behave the same way and the workflow only has to say how long
+      // it is prepared to wait.
+      const wait = parseCount("--wait", values["--wait"] ?? "0", 120, "minutes");
+      const confirm = parseCount("--confirm", values["--confirm"] ?? "60", 600, "seconds");
+      const completeness = parseCompleteness(
+        values["--min-completeness"] ?? String(MIN_COMPLETENESS),
+      );
+
+      return scrapeCommand(flags.has("--dry-run"), wait, confirm, completeness);
     }
     case "backfill":
       return backfillCommand(argv.slice(1));

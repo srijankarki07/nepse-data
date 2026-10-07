@@ -1,0 +1,36 @@
+name = "nepse-dispatch"
+main = "worker.js"
+
+# Pinned and in the past: a compatibility date fixes the runtime's behaviour so a future
+# workerd release cannot change what this does without a commit here.
+compatibility_date = "2026-01-01"
+
+# 09:20 UTC is 15:05 in Kathmandu, five minutes after NEPSE's 09:15 UTC close, and gives the
+# run a moment to start before the source is expected to publish.
+#
+# The second is a re-attempt for the day a source publishes late: if the first succeeded,
+# this one finds the session already archived, commits nothing and costs about forty
+# seconds. It is spaced well past the first run's budget so it cannot evict it. See the
+# note on concurrency in .github/workflows/daily.yml.
+#
+# Neither encodes a trading week. The Worker fires on Saturday and Sunday too, and a closed
+# day is a no-op. That is deliberate and hard-won; daily.yml explains why.
+[triggers]
+crons = ["20 9 * * *", "7 10 * * *"]
+
+[vars]
+GITHUB_REPO = "srijankarki07/nepse-data"
+WORKFLOW_FILE = "daily.yml"
+REF = "main"
+
+# Minutes the job should wait for the session to appear. Must be a string, because every
+# workflow input is one.
+#
+# Twenty-five covers 09:20 to roughly 09:47 including the runner's startup, which is the
+# half-hour target and a little margin. Raising it only costs anything on a closed day,
+# where the job waits out the whole budget. That is the honest price of not encoding a
+# trading week anywhere.
+WAIT_MINUTES = "25"
+
+# GITHUB_TOKEN is a secret, not a var. Set it with `wrangler secret put GITHUB_TOKEN`; it
+# must never appear in this file. See README.md for the permissions it needs and why.

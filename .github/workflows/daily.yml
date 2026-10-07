@@ -2,6 +2,37 @@ name: Daily prices
 
 # Fetches the session and commits it. This is the whole point of the repository.
 #
+# ## What triggers it, and why it is not only the schedule
+#
+# NEPSE closes at 15:00 Kathmandu (09:15 UTC). The promise this workflow makes is that the
+# day's session is committed within half an hour of that, by 09:45 UTC.
+#
+# **The GitHub schedule cannot make that promise, and this repository measured it.** Over
+# the six sessions from 2026-10-01 the `schedule` event fired between 4h28m and 9h02m late,
+# and on 2026-10-02 it did not fire at all: `created_at == run_started_at` on every run, so
+# the delay is GitHub queueing the event, not a runner waiting for a machine. The 2026-10-05
+# session was committed at 01:02 Kathmandu the following morning. `schedule` is a
+# best-effort queue, and a dropped run leaves nothing on the Actions page to show for it.
+#
+# So the punctual trigger is external: a Cloudflare Worker cron (see `ops/dispatch/`) fires
+# at 09:20 UTC and dispatches this workflow, which starts immediately where `schedule` does
+# not. The cron below stays as the **backstop**, for the day the Worker is broken, its token
+# has expired, or Cloudflare is down. A backstop that is hours late is still enormously better
+# than a day that never arrives, and it is the reason nothing here needs to be perfect.
+#
+# ## Why the job waits rather than running at a chosen hour
+#
+# The fetch is given a `--wait` budget in minutes and polls the source until the session
+# appears, so the workflow no longer has to guess when the source publishes. See
+# `src/lib/readiness.ts`: it also refuses a table that will not hold still, and one that is
+# too small to be a full session.
+#
+# The backstop passes `--wait 0`, so a GitHub-timed run reads once and decides rather than
+# sitting on a runner. It is hours late anyway, by which time the source has long since
+# settled. **A run that starts late still archives the right day**: the loop waits for the
+# session the *source* is showing, never for "today" as the runner's clock sees it. That is
+# what makes the 01:02-Kathmandu case above recover the day rather than miss it.
+#
 # ## Why the schedule runs every day
 #
 # **NEPSE's trading week is not fixed, and this repository learned that the hard way.**
@@ -16,15 +47,13 @@ name: Daily prices
 # this repository exists to prevent, and it went unnoticed for months because the schedule
 # looked like it was working.
 #
-# So the schedule does not encode a trading week at all. It runs **daily**, and a day the
-# market was shut costs one request and commits nothing: the source keeps reporting the
-# previous session, whose file is already archived and byte-identical. Two wasted runs a
-# week is a far better trade than a silent hole that surfaces months later, and it stays
-# correct the next time the exchange changes its week.
-#
-# `15 10` is 10:15 UTC, which is 16:00 in Kathmandu (UTC+05:45) — an hour after the close,
-# so final figures have been published, and early enough that the rest of the day is left
-# free if the run needs retrying by hand.
+# So the schedule does not encode a trading week at all, and neither does the Worker: both
+# fire **daily**. A day the market was shut costs one request and commits nothing, because
+# the source keeps reporting the previous session, whose file is already archived and
+# byte-identical. Two wasted runs a week is a far better trade than a silent hole that
+# surfaces months later, and it stays correct the next time the exchange changes its week.
+# The `--wait` budget is a **duration**, not a weekday or an exchange-hours rule, so the
+# same reasoning extends to it.
 #
 # ## Why the commit matters beyond the data
 #
@@ -32,22 +61,44 @@ name: Daily prices
 # that only called an external API and never touched the repository would be switched
 # off silently — and the discovery would be a gap in the archive. Committing the day's
 # file is what keeps the schedule alive, so the design defect is avoided by the design
-# itself rather than by a workaround.
+# itself rather than by a workaround. (The Worker is unaffected either way: it dispatches,
+# and `workflow_dispatch` is not subject to the inactivity rule.)
 
 on:
   schedule:
-    # Every day, deliberately — see the note above on why the trading week is not
-    # encoded here. A closed day is a no-op.
+    # The backstop. Two slots, because GitHub sometimes drops a run outright rather than
+    # delaying it (2026-10-02 was one), and a duplicate run commits nothing.
     - cron: "15 10 * * *"
-  # So a failed or missed day can be picked up without waiting for tomorrow. Safe to
-  # press repeatedly: re-fetching a session already archived writes nothing.
+    - cron: "30 14 * * *"
+  # So a failed or missed day can be picked up without waiting for tomorrow, and so the
+  # Cloudflare Worker has something to call. Safe to press repeatedly: re-fetching a
+  # session already archived writes nothing.
   workflow_dispatch:
+    inputs:
+      wait:
+        description: "Minutes to wait for the session to appear. 0 reads once."
+        required: false
+        default: "0"
+      confirm:
+        description: "Seconds between the two reads that must agree. 0 trusts the first."
+        required: false
+        default: "60"
 
 permissions:
   contents: write
 
 # Never two at once. A manual dispatch during a scheduled run would otherwise race on
 # the same file.
+#
+# One consequence worth knowing, because it is invisible: GitHub keeps at most one running
+# and one *pending* run per group, and a newly queued run evicts the pending one. So if a
+# long backfill (which shares this group on purpose, see backfill.yml) is running when the
+# Worker dispatches at 09:20, the daily run goes pending, and the 10:15 backstop, arriving
+# later, cancels it and takes the slot. Nothing is lost, since the survivor does the same
+# work, but the punctual promise is broken for that day and the cancellation notifies
+# nobody. Backfills are hand-dispatched and rare, so this is a trade rather than a defect:
+# the alternative, letting two jobs write and push to main at once, risks a rejected push
+# and a session that never lands at all.
 concurrency:
   group: daily-prices
   cancel-in-progress: false
@@ -55,6 +106,12 @@ concurrency:
 jobs:
   fetch:
     runs-on: ubuntu-latest
+
+    # Room for the longest wait the Worker asks for plus the install, typecheck and test,
+    # and no more. Without this the job inherits six hours, so a stuck wait would hold the
+    # concurrency group for the whole ceiling, with a hand-dispatched backfill queued
+    # behind it.
+    timeout-minutes: 40
 
     steps:
       - uses: actions/checkout@v4
@@ -81,9 +138,21 @@ jobs:
       - name: Fetch the session
         # Not `pnpm fetch` — that is a pnpm built-in which populates the package store,
         # exits 0 and archives nothing. See the note in src/cli.ts.
-        run: pnpm scrape
+        #
+        # `${VAR:-default}` rather than `${{ inputs.wait || 0 }}`: the `||` operator would
+        # turn a deliberate `--confirm 0` into 60, because the string "0" is falsy to
+        # GitHub's expression language. This form substitutes only for empty or unset, so
+        # `0` survives, and a `schedule` event, where `inputs` is empty, still gets the
+        # defaults. A silently substituted flag is the failure this repository already has
+        # a note about, so the flag is echoed below as well.
+        env:
+          WAIT: ${{ inputs.wait }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          pnpm scrape --wait "${WAIT:-0}" --confirm "${CONFIRM:-60}"
 
       - name: Commit if anything changed
+        id: commit
         run: |
           git add data
 
@@ -92,8 +161,35 @@ jobs:
             exit 0
           fi
 
-          SESSION=$(git diff --cached --name-only -- data | head -1 | xargs -r basename | sed 's/\.csv$//')
+          # The session, not merely the first changed file. The run also rewrites the index
+          # files, and naming a commit after `latest.json` would be both wrong and, in the
+          # step below, unparseable as a date.
+          SESSION=$(git diff --cached --name-only -- data/daily | head -1 | xargs -r basename | sed 's/\.csv$//')
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "data: ${SESSION:-session} end-of-day prices"
           git push
+
+          echo "session=${SESSION}" >> "$GITHUB_OUTPUT"
+
+      # The alarm that makes a dead trigger visible.
+      #
+      # When the Worker is doing its job, this run finds the session already archived and
+      # the step above commits nothing, so this step does not run at all. It runs exactly
+      # when *this* run was the one that had to archive the day, which means either the
+      # Worker did not fire or the source was late. Both are worth waking up for, and
+      # neither is visible otherwise: a broken Worker looks precisely like a healthy one.
+      - name: Did this backstop have to cover for the punctual trigger?
+        if: steps.commit.outputs.session != ''
+        run: |
+          SESSION="${{ steps.commit.outputs.session }}"
+          CLOSE=$(date -u -d "${SESSION} 09:15:00" +%s)
+          LATE=$(( $(date -u +%s) - CLOSE ))
+
+          if [ "$LATE" -le 2700 ]; then
+            echo "${SESSION} was archived $((LATE / 60))m after its close, within target."
+            exit 0
+          fi
+
+          echo "::error::${SESSION} was archived $((LATE / 60))m after its close, not the 30m target. The data is committed and safe; this run is red because the punctual trigger did not do its job. Check the Cloudflare Worker in ops/dispatch. Most likely GITHUB_TOKEN has expired."
+          exit 1

@@ -6,3 +6,7 @@ node_modules/
 # place on success, so anything still matching this is debris — and the workflow's
 # `git add data` would otherwise commit it as though it were part of the archive.
 data/**/*.tmp
+
+# Wrangler's local state, left behind by `wrangler dev` in ops/dispatch. It holds a build
+# cache, and on some versions a local secrets store. None of it belongs in the repo.
+.wrangler/
