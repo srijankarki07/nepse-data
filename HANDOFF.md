@@ -102,9 +102,10 @@ Everything below was checked by running it, not by reading it.
   stays as a backstop at 10:15 and 14:30 UTC. The job itself was changed from "run an hour
   after the close" to "wait for the session" (`src/lib/readiness.ts`), with a settle gate
   and a completeness floor. The residual risk is the token: an expired PAT degrades
-  silently to the backstop, which is late. That is why `daily.yml` fails the run when it is
-  the one that has to archive a session more than 45 minutes after its close, and that
-  failure is the alarm.
+  silently to the backstop, which is late. That is why `daily.yml` fails a **cron** run that
+  has to archive a session more than 45 minutes after its close: that run is the canary, and
+  the failure is the alarm. A hand dispatch only warns, so that a deliberate intervention
+  does not teach anyone to ignore red.
 
 - **No session has yet been committed by the Worker.** Everything above was verified by
   running the pieces (the CLI against the live page, the readiness loop against injected

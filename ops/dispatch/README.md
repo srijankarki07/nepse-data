@@ -104,8 +104,9 @@ would let anyone who found it spend Actions minutes and push commits to this rep
 lifetime, and when it lapses the Worker starts failing every tick and says nothing. Nothing
 breaks immediately, because the 10:15 UTC cron backstop still archives the day, but the
 data starts arriving hours late, exactly as it did before this Worker existed. The alarm
-that catches it is in `daily.yml`: a run that has to archive a session more than 45 minutes
-after its close fails, and a failed run emails you.
+that catches it is in `daily.yml`: when the *cron* is the run that has to archive a session
+more than 45 minutes after its close, it fails, and a failed run emails you. Hand dispatches
+only warn, since the person who pressed the button already knows the day was late.
 
 So: note the expiry date here when you set it, and re-run steps 2, 3 and 4 before it passes.
 

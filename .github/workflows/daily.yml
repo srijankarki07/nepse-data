@@ -179,8 +179,12 @@ jobs:
       # when *this* run was the one that had to archive the day, which means either the
       # Worker did not fire or the source was late. Both are worth waking up for, and
       # neither is visible otherwise: a broken Worker looks precisely like a healthy one.
+      #
+      # Only the cron version of it goes red. See the reasoning in the step itself.
       - name: Did this backstop have to cover for the punctual trigger?
         if: steps.commit.outputs.session != ''
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           SESSION="${{ steps.commit.outputs.session }}"
           CLOSE=$(date -u -d "${SESSION} 09:15:00" +%s)
@@ -191,5 +195,17 @@ jobs:
             exit 0
           fi
 
-          echo "::error::${SESSION} was archived $((LATE / 60))m after its close, not the 30m target. The data is committed and safe; this run is red because the punctual trigger did not do its job. Check the Cloudflare Worker in ops/dispatch. Most likely GITHUB_TOKEN has expired."
-          exit 1
+          LATE_MESSAGE="${SESSION} was archived $((LATE / 60))m after its close, not the 30m target. The data is committed and safe."
+
+          # Red for the cron only, because the schedule is the run whose whole purpose here
+          # is to be the canary for a punctual trigger that failed. Failing a hand dispatch
+          # would be wrong twice over: whoever pressed it already knows the day was late,
+          # and a red X on a deliberate intervention is how a team learns to ignore red Xs.
+          # A Worker dispatch that lands late is worth seeing but is the source's fault
+          # rather than the trigger's, so it warns.
+          if [ "$EVENT" = "schedule" ]; then
+            echo "::error::${LATE_MESSAGE} This run is red because the punctual trigger did not do its job. Check the Cloudflare Worker in ops/dispatch. Most likely GITHUB_TOKEN has expired."
+            exit 1
+          fi
+
+          echo "::warning::${LATE_MESSAGE} Archived by a ${EVENT} run rather than the backstop, so this is expected if it was dispatched by hand and a slow source if the Worker sent it."
