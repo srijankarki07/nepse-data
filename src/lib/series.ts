@@ -50,19 +50,15 @@
  * which is the kind of error nothing downstream could detect.
  */
 
-import { mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import type { Dirent } from "node:fs";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { toCsv } from "./csv.js";
+import { forEachArchivedRow } from "./rows.js";
 import { COLUMNS } from "./serialize.js";
 
 /** Where the per-symbol files live. Alongside `daily/`, like the other indexes. */
 export const SERIES_DIRECTORY = "data/series";
-
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const FIELD_COUNT = COLUMNS.length;
-const DAY_PATTERN = /^\d{4}$/;
 
 /** The header every series file starts with, identical to a session file's. */
 const HEADER = toCsv(COLUMNS, []);
@@ -97,34 +93,6 @@ export function seriesPath(symbol: string): string {
   return path.join(SERIES_DIRECTORY, `${seriesName(symbol)}.csv`);
 }
 
-/** Every archived session file, oldest first, so rows arrive in date order. */
-async function sessionFiles(root: string): Promise<string[]> {
-  const daily = path.join(root, "data", "daily");
-
-  let entries: Dirent[];
-  try {
-    entries = await readdir(daily, { withFileTypes: true });
-  } catch {
-    // No archive yet. Not an error: there is simply nothing to index.
-    return [];
-  }
-
-  const files: string[] = [];
-  // Filtered by directory rather than by name alone, because anything sitting under
-  // `data/daily/` that is not a year of sessions is not this function's business.
-  for (const year of entries
-    .filter((entry) => entry.isDirectory() && DAY_PATTERN.test(entry.name))
-    .map((entry) => entry.name)
-    .sort()) {
-    const inYear = await readdir(path.join(daily, year));
-    for (const file of inYear.filter((entry) => entry.endsWith(".csv")).sort()) {
-      files.push(path.join(daily, year, file));
-    }
-  }
-
-  return files;
-}
-
 /**
  * Every row of every session, grouped by ticker and ordered by date.
  *
@@ -133,59 +101,28 @@ async function sessionFiles(root: string): Promise<string[]> {
  * same header reproduces them faithfully — a re-serialization would be a second writer to
  * keep in step with the first for no gain.
  *
- * A row that does not fit the format is a **failure**, not something to skip: the files
- * under `data/daily/` were written by this repository, so a malformed one means the archive
- * is damaged, and an index that quietly dropped the row would hide it.
+ * The collision check is here rather than in the reader because it is a fact about *this*
+ * index: the closes index names no files, so two tickers sharing a name costs it nothing.
  */
 async function rowsBySymbol(root: string): Promise<Map<string, string[]>> {
   const byName = new Map<string, string[]>();
   const symbolOf = new Map<string, string>();
 
-  for (const file of await sessionFiles(root)) {
-    const text = await readFile(file, "utf8");
-    const relative = path.relative(root, file);
-    const expectedDate = path.basename(file, ".csv");
-    const lines = text.split(/\r?\n/);
-
-    for (let index = 0; index < lines.length; index++) {
-      const line = lines[index];
-      if (line === undefined || line === "") continue;
-      if (index === 0 && line.startsWith("date,")) continue;
-
-      const fields = line.split(",");
-      if (fields.length !== FIELD_COUNT) {
-        throw new Error(
-          `${relative}:${index + 1} has ${fields.length} columns, expected ${FIELD_COUNT}. ` +
-            "The archive is damaged, so no index was written.",
-        );
-      }
-
-      const date = fields[0] ?? "";
-      if (!DATE_PATTERN.test(date) || date !== expectedDate) {
-        throw new Error(
-          `${relative}:${index + 1} is dated "${date}", but the file is named for ` +
-            `${expectedDate}. The archive is damaged, so no index was written.`,
-        );
-      }
-
-      const symbol = (fields[1] ?? "").trim();
-      if (symbol === "") continue;
-
-      const name = seriesName(symbol);
-      const already = symbolOf.get(name);
-      if (already !== undefined && already !== symbol) {
-        throw new Error(
-          `"${symbol}" and "${already}" both want the file ${name}.csv. Two tickers in one ` +
-            "file would merge their histories, so nothing was written.",
-        );
-      }
-      symbolOf.set(name, symbol);
-
-      const rows = byName.get(name);
-      if (rows === undefined) byName.set(name, [line]);
-      else rows.push(line);
+  await forEachArchivedRow(root, (row) => {
+    const name = seriesName(row.symbol);
+    const already = symbolOf.get(name);
+    if (already !== undefined && already !== row.symbol) {
+      throw new Error(
+        `"${row.symbol}" and "${already}" both want the file ${name}.csv. Two tickers in ` +
+          "one file would merge their histories, so nothing was written.",
+      );
     }
-  }
+    symbolOf.set(name, row.symbol);
+
+    const rows = byName.get(name);
+    if (rows === undefined) byName.set(name, [row.line]);
+    else rows.push(row.line);
+  });
 
   return byName;
 }
