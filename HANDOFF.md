@@ -301,8 +301,13 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
   measurement did confirm is the review cost, because a daily commit now touches several
   hundred files instead of one. It buys a year of one scrip going from 231 requests and
   4.13 MB to one request of ~11 KB, for every consumer of the package and with no change on
-  their side. `data/series/` is rebuilt from `data/daily/` on every run so that it cannot
-  drift, and written only where the bytes changed so that a holiday still commits nothing.
+  their side. `data/series/` and `data/closes/` are both rebuilt from `data/daily/` on every
+  run so that they cannot drift, and written only where the bytes changed so that a holiday
+  still commits nothing. The second index exists because the first cannot answer a
+  market-wide question: the equal-weighted index needs every scrip's close for each of ~230
+  dates, which per-symbol files cannot serve without a request per listed scrip. One year is
+  one 450 KB file, and it agrees with the session walk on all 78,064 `(date, scrip, close)`
+  values it holds.
 - **Eight columns.** The source publishes twenty-four; the rest are derived on the page.
 - **The date comes from the page's own heading**, never the clock.
 - **A missing value is an empty field**, never `0`.

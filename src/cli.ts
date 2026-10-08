@@ -57,6 +57,7 @@ import {
   formatElapsed,
 } from "./lib/readiness.js";
 import { snapshotToCsv } from "./lib/serialize.js";
+import { CLOSES_DIRECTORY, writeCloses } from "./lib/closes.js";
 import { SERIES_DIRECTORY, writeSeries } from "./lib/series.js";
 import { SYMBOLS_PATH, mergeSymbols } from "./lib/symbols.js";
 import { MIN_HISTORICAL_ROWS, fetchTodaySession } from "./sources/sharesansar.js";
@@ -96,7 +97,7 @@ const USAGE = `Usage: nepse-data <command> [options]
     --min-rows N        Refuse a session with fewer scrips (default ${MIN_HISTORICAL_ROWS}).
     --dry-run           Parse and report without writing anything.
 
-  series                Rebuild data/series/ — one file per ticker, from the archive.
+  index                 Rebuild data/series/ and data/closes/ from the archive.
                         No network: it reads data/daily/ and rewrites what changed.
     --dry-run           Report what would change without writing anything.
 `;
@@ -319,7 +320,7 @@ const SCRAPE_FLAGS: Record<string, FlagKind> = {
   "--dry-run": "boolean",
 };
 
-const SERIES_FLAGS: Record<string, FlagKind> = {
+const INDEX_FLAGS: Record<string, FlagKind> = {
   "--dry-run": "boolean",
 };
 
@@ -443,31 +444,41 @@ async function backfillCommand(argv: readonly string[]): Promise<number> {
 }
 
 /**
- * Rebuilds `data/series/` from the archive. No network, no source, no options to get wrong.
+ * Rebuilds the derived indexes, `data/series/` and `data/closes/`, from the archive.
  *
- * It lives in the daily job rather than in a workflow of its own so that the index is
- * never behind the archive: the run that writes a session also writes the series file that
- * contains it. That also means a day the market did not trade rewrites nothing, because
- * every file's bytes are compared before it is written.
+ * No network, no source, no options to get wrong. It lives in the daily job rather than in a
+ * workflow of its own so that the indexes are never behind the archive: the run that writes
+ * a session also writes the files that contain it. That also means a day the market did not
+ * trade rewrites nothing, because every file's bytes are compared before it is written.
+ *
+ * One command rather than two, so a workflow cannot run half of it and commit an archive
+ * whose two indexes disagree about which sessions exist.
  */
-async function seriesCommand(dryRun: boolean): Promise<number> {
+async function indexCommand(dryRun: boolean): Promise<number> {
   const started = Date.now();
-  const outcome = await writeSeries(REPO_ROOT, { dryRun });
 
-  console.log(`Series  ${SERIES_DIRECTORY} — ${outcome.symbols} tickers, ${outcome.rows} rows`);
+  const series = await writeSeries(REPO_ROOT, { dryRun });
   console.log(
-    `        ${outcome.written} ${dryRun ? "to write" : "written"}, ${outcome.unchanged} ` +
-      `already current, in ${formatElapsed(Date.now() - started)}`,
+    `Series  ${SERIES_DIRECTORY} — ${series.symbols} tickers, ${series.rows} rows, ` +
+      `${series.written} ${dryRun ? "to write" : "written"}, ${series.unchanged} already current`,
   );
 
-  if (outcome.escaped.length > 0) {
+  if (series.escaped.length > 0) {
     // Said out loud because these are the tickers whose file name is not their ticker, and
     // the list is short enough to check by eye.
-    const shown = outcome.escaped.slice(0, 8).join(", ");
-    const rest = outcome.escaped.length > 8 ? `, and ${outcome.escaped.length - 8} more` : "";
-    console.log(`        ${outcome.escaped.length} escaped names: ${shown}${rest}`);
+    const shown = series.escaped.slice(0, 8).join(", ");
+    const rest = series.escaped.length > 8 ? `, and ${series.escaped.length - 8} more` : "";
+    console.log(`        ${series.escaped.length} escaped names: ${shown}${rest}`);
   }
 
+  const closes = await writeCloses(REPO_ROOT, { dryRun });
+  console.log(
+    `Closes  ${CLOSES_DIRECTORY} — ${closes.dates} sessions across ` +
+      `${closes.written + closes.unchanged} ${closes.written + closes.unchanged === 1 ? "year" : "years"}, ` +
+      `${closes.written} ${dryRun ? "to write" : "written"}, ${closes.unchanged} already current`,
+  );
+
+  console.log(`        in ${formatElapsed(Date.now() - started)}`);
   return 0;
 }
 
@@ -496,8 +507,8 @@ async function main(argv: readonly string[]): Promise<number> {
     }
     case "backfill":
       return backfillCommand(argv.slice(1));
-    case "series":
-      return seriesCommand(parseFlags(argv.slice(1), SERIES_FLAGS).flags.has("--dry-run"));
+    case "index":
+      return indexCommand(parseFlags(argv.slice(1), INDEX_FLAGS).flags.has("--dry-run"));
     default:
       console.error(`Unknown command "${command}".\n\n${USAGE}`);
       return 2;
