@@ -26,6 +26,8 @@ data/daily/2026/2026-09-30.csv    one file per trading session, ~3-20 KB
                                   3,600 files across 16 years, 38 MB in total
 data/series/NABIL.csv             one file per ticker, its whole history, ~34 MB in total
 data/closes/2025.csv              one file per year, every ticker's close, ~3.5 MB in total
+data/indices/latest.json          the exchange's index levels, newest session, ~4.5 KB
+data/indices/nepse.csv            one file per index, appended daily, one row a session
 src/                              the scraper and the CLI
 tests/                            including real captured responses as fixtures
 .github/workflows/daily.yml       fetches and commits, every trading day
@@ -66,6 +68,45 @@ one file a day, 2.4 KB of `.git` per commit.
 
 Directories are nested by year because a single one would hold several thousand files
 within a decade.
+
+### `data/indices/` is the exception, and it accumulates
+
+**NEPSE's indices cannot be computed from this archive.** They are capitalisation-weighted
+over defined baskets, and the daily files hold eight columns of per-scrip prices with no
+share counts, so no arrangement of them yields the real level. The only place a level exists
+is the page the exchange publishes it on, on the day it is published.
+
+So these files are the one part of the layout that is not an index over `data/daily/`.
+`data/indices/<key>.csv` holds one index's history, one row per session:
+
+```csv
+date,open,high,low,close,change,percentChange,turnover
+2026-10-07,2579,2579.1,2565.22,2572.34,-6.38,-0.24,3748080303.07
+```
+
+`data/indices/latest.json` holds every level for the newest session, in about 4.5 KB. That is
+the hot path: a site showing today's rail should not download years of rows to answer a
+question about one day. Each entry carries its own `date` rather than sharing one at the top,
+so a level that could not be updated shows the session it is actually from instead of
+borrowing a newer one.
+
+**The history begins the day this was introduced**, and unlike `data/series/` it cannot be
+rebuilt backwards. The archive accumulated its own history by walking the source day by day
+from 2011; there is no equivalent walk for index levels, and the page only ever shows the
+current session.
+
+A row is appended only when its session is **newer** than the last one the file holds, so a
+re-run, a retried workflow and a holiday all write nothing. A session already recorded is
+never rewritten, which means a correction the source makes to a past session is not picked
+up: what was published stays published, the same rule the daily files follow.
+
+The key is a **fixed table, not a slug derived from the label**. Seventeen keys are in use
+(`nepse`, `sensitive`, `float`, `sensitive-float`, `banking`, `development-bank`, `finance`,
+`hydropower`, `microfinance`, `life-insurance`, `non-life-insurance`,
+`manufacturing-and-processing`, `hotels-and-tourism`, `trading`, `investment`, `mutual-fund`,
+`others`). A derived slug would follow the source through a rename and quietly start a second
+file, leaving every reader of the old key with a history that simply stops, so an unknown
+label fails the run instead and a person decides whether it is a rename or an addition.
 
 ## The format
 
@@ -207,7 +248,17 @@ pnpm backfill --from 2011-01-01                              # to yesterday, by 
 
 pnpm index:dry   # rebuild the derived indexes and report, write nothing
 pnpm index       # rebuild them for real; reads data/daily/, never the network
+
+pnpm indices:dry # read the exchange's index levels and report, write nothing
+pnpm indices     # record them; one request, appends only what is new
 ```
+
+**`pnpm indices` is the one index step that touches the network**, which is why it is its own
+command rather than part of `pnpm index`. The daily job runs it with `continue-on-error`, and
+a later step turns the run red if it failed. That is deliberate: the session is written to
+disk and committed before the failure is reported, so a source outage costs a day of index
+levels rather than a hole in the archive. The levels can be fetched again tomorrow; a session
+cannot.
 
 ## Backfilling history
 
@@ -339,6 +390,12 @@ The code is MIT (see `LICENSE`). The data is not covered by it.
 - **One source.** If ShareSansar changes its markup or blocks the job, the archive stops
   growing. The failure is loud rather than silent: the parser refuses a page whose table
   or columns it cannot find, and the workflow fails.
+- **Index levels have no history before October 2026.** NEPSE's indices are
+  capitalisation-weighted over baskets the archive holds no share counts for, so
+  `data/indices/` **accumulates** from the day it was introduced rather than being rebuilt
+  backwards. A chart of an index before that date cannot be produced from this repository,
+  and no amount of re-scraping will change that: the page only ever shows the current
+  session.
 - **Nested tables are not separated.** `src/lib/html.ts` counts table depth so it finds
   the right closing tag, but a nested table's rows would be read as the outer one's. The
   source has no nested tables; the limitation is recorded rather than hidden.

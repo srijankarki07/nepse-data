@@ -13,6 +13,8 @@
     "backfill": "tsx src/cli.ts backfill",
     "index": "tsx src/cli.ts index",
     "index:dry": "tsx src/cli.ts index --dry-run",
+    "indices": "tsx src/cli.ts indices",
+    "indices:dry": "tsx src/cli.ts indices --dry-run",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

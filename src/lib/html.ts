@@ -139,23 +139,19 @@ export function symbolNames(html: string): Map<string, string> {
 }
 
 /**
- * Rows of cell text from the table carrying `id`, or `null` when no such table exists.
+ * Every row of cell text in the markup it is given, header row first.
  *
- * `null` rather than `[]` on purpose: "the table is gone" and "the table is empty" are
- * different failures, and a caller that sees `[]` might reasonably decide there were no
- * trades today. The distinction is what lets the CLI refuse to write an empty file.
+ * `</tr>` is optional in HTML, so rows are split on the opening tag and each chunk is cut
+ * at its closing one if it has any. A row that never closes is still read.
+ *
+ * Anything before the first `<tr>` is discarded, which is what lets a caller hand this a
+ * whole *section* rather than table content — see `sectionByHeading`, which returns the
+ * heading, the "As of" line and the table together.
  */
-export function extractTableById(html: string, id: string): string[][] | null {
-  const tag = findTableTag(html, id);
-  if (tag === null) return null;
-
-  const tableHtml = html.slice(tag.end, findTableEnd(html, tag.end));
-
-  // `</tr>` is optional in HTML, so rows are split on the opening tag and each chunk is
-  // cut at its closing one if it has any. A row that never closes is still read.
+export function extractTableRows(markup: string): string[][] {
   const rows: string[][] = [];
 
-  for (const chunk of tableHtml.split(/<tr\b[^>]*>/i).slice(1)) {
+  for (const chunk of markup.split(/<tr\b[^>]*>/i).slice(1)) {
     const close = chunk.search(/<\/tr>/i);
     const body = close === -1 ? chunk : chunk.slice(0, close);
 
@@ -167,4 +163,53 @@ export function extractTableById(html: string, id: string): string[][] | null {
   }
 
   return rows;
+}
+
+/**
+ * Rows of cell text from the table carrying `id`, or `null` when no such table exists.
+ *
+ * `null` rather than `[]` on purpose: "the table is gone" and "the table is empty" are
+ * different failures, and a caller that sees `[]` might reasonably decide there were no
+ * trades today. The distinction is what lets the CLI refuse to write an empty file.
+ */
+export function extractTableById(html: string, id: string): string[][] | null {
+  const tag = findTableTag(html, id);
+  if (tag === null) return null;
+
+  return extractTableRows(html.slice(tag.end, findTableEnd(html, tag.end)));
+}
+
+/**
+ * The markup of the section under the heading `title`, or `null` when no heading says it.
+ *
+ * ## Why a heading, when everything else here finds a table by id
+ *
+ * The market page's index tables carry no `id` at all: twelve tables share the same class
+ * and nothing else distinguishes them. What does distinguish them is the `<h3>` above each
+ * one, so the heading is read and the first table beneath it is taken.
+ *
+ * The slice runs from just after the heading to the end of that table, which is deliberate:
+ * it carries the section's own "As of <date>" line as well as its rows, so a caller can read
+ * a section's date and its rows from one place. The *page* has several of those dates and
+ * they are not the same day — the foreign-exchange panel is today's, the indices are the
+ * last session's — so a date read from the whole page would be the wrong one.
+ *
+ * The heading text is compared through `textOf`, so a heading that wraps part of itself in
+ * a `<span>` (this source does: `Sub <span>Indices</span>`) still reads as one string, and
+ * the level is not fixed: any `<h1>`-`<h6>` will do.
+ */
+export function sectionByHeading(html: string, title: string): string | null {
+  const wanted = title.replace(/\s+/g, " ").trim().toLowerCase();
+
+  for (const match of html.matchAll(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi)) {
+    if (textOf(match[2] ?? "").toLowerCase() !== wanted) continue;
+
+    const from = (match.index ?? 0) + match[0].length;
+    const table = /<table\b[^>]*>/i.exec(html.slice(from));
+    if (table === null) return null;
+
+    return html.slice(from, findTableEnd(html, from + table.index + table[0].length));
+  }
+
+  return null;
 }
