@@ -161,6 +161,25 @@ jobs:
         # holiday a no-op: nothing changes, so the step below still commits nothing.
         run: pnpm index
 
+      - name: Record the exchange's index levels
+        id: indices
+        # Its own command, because it is the one index step that touches the network. `pnpm
+        # index` derives the per-symbol and per-year files from `data/daily/` and has to stay
+        # independent of whether ShareSansar is reachable. This reads the exchange's own
+        # levels instead, which is the one thing the archive cannot derive: it holds eight
+        # columns of prices and no share counts, so a capitalisation-weighted index cannot be
+        # recomputed from it.
+        #
+        # **`continue-on-error` is load-bearing, and the failure is not swallowed.** One
+        # request, appended, so a re-run and a holiday both write nothing. But if the source
+        # is down or its markup has moved, the failure must not land *before* the commit: the
+        # session is already written to disk by that point, and failing here would throw it
+        # away, leaving a hole in the archive for a reason that is not the archive's fault.
+        # The levels can be fetched again tomorrow; a session cannot. So the commit is
+        # allowed to run, and a later step turns the run red instead.
+        continue-on-error: true
+        run: pnpm indices
+
       - name: Commit if anything changed
         id: commit
         run: |
@@ -181,6 +200,18 @@ jobs:
           git push
 
           echo "session=${SESSION}" >> "$GITHUB_OUTPUT"
+
+      # The alarm for the step that was deliberately allowed to fail.
+      #
+      # It runs after the commit rather than through it, which is the whole point: the
+      # session is safely pushed by the time this is reached, so a broken index fetch costs
+      # a red run and nothing else. The levels are a day behind until it is fixed, and the
+      # usual cause is the source's markup rather than anything here.
+      - name: Did the index levels land?
+        if: steps.indices.outcome == 'failure'
+        run: |
+          echo "::error::The exchange's index levels were not recorded this run. The session itself is committed and safe, and data/indices/ still holds every session it held before. Re-run this workflow once sharesansar.com/market is reachable, or check whether its index tables have changed shape."
+          exit 1
 
       # The alarm that makes a dead trigger visible.
       #

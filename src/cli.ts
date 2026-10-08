@@ -58,8 +58,10 @@ import {
 } from "./lib/readiness.js";
 import { snapshotToCsv } from "./lib/serialize.js";
 import { CLOSES_DIRECTORY, writeCloses } from "./lib/closes.js";
+import { INDICES_DIRECTORY, INDICES_LATEST_PATH, writeIndices } from "./lib/indices.js";
 import { SERIES_DIRECTORY, writeSeries } from "./lib/series.js";
 import { SYMBOLS_PATH, mergeSymbols } from "./lib/symbols.js";
+import { fetchMarketPage, parseMarketPage } from "./sources/sharesansar-index.js";
 import { MIN_HISTORICAL_ROWS, fetchTodaySession } from "./sources/sharesansar.js";
 import { createPriceSession } from "./sources/sharesansar-session.js";
 import type { DaySnapshot } from "./types.js";
@@ -100,6 +102,11 @@ const USAGE = `Usage: nepse-data <command> [options]
   index                 Rebuild data/series/ and data/closes/ from the archive.
                         No network: it reads data/daily/ and rewrites what changed.
     --dry-run           Report what would change without writing anything.
+
+  indices               Read the exchange's index levels and append them to
+                        data/indices/, one file per index, plus latest.json.
+                        One request. A session already recorded is left alone.
+    --dry-run           Parse and report without writing anything.
 `;
 
 /** A mistake in how the command was called, as opposed to a failure while running. */
@@ -324,6 +331,10 @@ const INDEX_FLAGS: Record<string, FlagKind> = {
   "--dry-run": "boolean",
 };
 
+const INDICES_FLAGS: Record<string, FlagKind> = {
+  "--dry-run": "boolean",
+};
+
 /**
  * A fraction between 0 and 1.
  *
@@ -482,6 +493,48 @@ async function indexCommand(dryRun: boolean): Promise<number> {
   return 0;
 }
 
+/**
+ * Records the exchange's index levels for the newest session.
+ *
+ * ## Why this is its own command rather than part of `index`
+ *
+ * It is the one index step that touches the network. `index` derives the per-symbol and
+ * per-year files from `data/daily/` and says so in its own note; folding a fetch into it
+ * would make that false and would make every rebuild depend on ShareSansar being up.
+ * Keeping them apart also keeps the failure legible: `index` failing means the archive is
+ * damaged, while this failing usually means the source is unreachable or its markup moved.
+ *
+ * ## One request, and it appends
+ *
+ * The daily job already talks to this host for the session, so this adds a request rather
+ * than a dependency. Appending is what makes it safe to run at any time: the page keeps
+ * serving the session that is already recorded until a new one closes, so a re-run, a
+ * retried workflow and a holiday all write nothing at all.
+ */
+async function indicesCommand(dryRun: boolean): Promise<number> {
+  const page = parseMarketPage(await fetchMarketPage());
+  const outcome = await writeIndices(REPO_ROOT, page, { dryRun });
+
+  console.log(
+    `Indices ${INDICES_DIRECTORY} — ${outcome.date}, ${outcome.indices} indices, ` +
+      `${outcome.written} ${dryRun ? "to write" : "written"}, ${outcome.unchanged} already current`,
+  );
+
+  if (outcome.appended.length === 0) {
+    // Said out loud because the two cases look identical in the counts above: a holiday
+    // and a run that has already recorded the session both append nothing, and neither is
+    // a failure.
+    console.log(`        The page is still showing ${outcome.date}, which is already recorded.`);
+  }
+
+  console.log(
+    `        ${INDICES_LATEST_PATH} ` +
+      (outcome.latestChanged ? (dryRun ? "would change" : "updated") : "already current"),
+  );
+
+  return 0;
+}
+
 async function main(argv: readonly string[]): Promise<number> {
   const command = argv[0];
 
@@ -509,6 +562,8 @@ async function main(argv: readonly string[]): Promise<number> {
       return backfillCommand(argv.slice(1));
     case "index":
       return indexCommand(parseFlags(argv.slice(1), INDEX_FLAGS).flags.has("--dry-run"));
+    case "indices":
+      return indicesCommand(parseFlags(argv.slice(1), INDICES_FLAGS).flags.has("--dry-run"));
     default:
       console.error(`Unknown command "${command}".\n\n${USAGE}`);
       return 2;

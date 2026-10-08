@@ -31,9 +31,10 @@ workflow … without 'workflow' scope`, the token has lost the scope and needs
 | Branches | `feat/backfill` merged to `main` with `--no-ff` |
 | Blocked on | **nothing** |
 | Workflows | all three have run on a runner; the daily job is verified end to end |
-| Tests | **136** passing, typecheck clean |
+| Tests | **216** passing, typecheck clean |
 | Archive | **3,600 sessions**, 2011-01-02 → 2026-10-02, 38 MB, ~16 years |
 | Index | `data/latest.json`, latest and previous session, worth reading first |
+| Index levels | `data/indices/latest.json` plus 17 per-index files, accumulating from 2026-10-07. See the note under *Decisions* |
 | Unresolved | **5 days** out of 5,752, all source artifacts, listed below |
 
 **Public is recent.** The repository was private for its whole life up to this point
@@ -293,6 +294,17 @@ parameter, and `fromdate`/`todate` are accepted and ignored.
   differ every day (including every holiday) and the daily job would commit a change
   daily, losing the no-op property. Freshness is `latest`, which moves only with the
   market.
+- **`data/indices/` accumulates, and everything else in the layout is derived.** NEPSE's
+  indices are capitalisation-weighted over baskets this archive holds no share counts for,
+  so the real level cannot be recomputed from `data/daily/` however it is arranged. The
+  only source is the page the exchange publishes it on, read once a session by a command
+  of its own (`pnpm indices`, the one index step that touches the network). The cost is
+  that the history **begins 2026-10-07** and cannot be rebuilt backwards; the benefit is
+  that the site's index rail shows the exchange's own levels rather than an equal-weighted
+  average standing in for them.
+- **The index keys are a fixed table, not slugs derived from the labels.** A derived slug
+  would follow the source through a rename and quietly start a second file, leaving readers
+  of the old key with a history that stops. An unknown label fails the run instead.
 - **One file per session as the record, plus a derived per-scrip index.** The earlier
   answer here was per-session files and nothing else, on the grounds that per-symbol files
   rewritten daily are how the community repositories reached several hundred MB. That was
