@@ -34,3 +34,6 @@ WAIT_MINUTES = "25"
 
 # GITHUB_TOKEN is a secret, not a var. Set it with `wrangler secret put GITHUB_TOKEN`; it
 # must never appear in this file. See README.md for the permissions it needs and why.
+
+[observability]
+enabled = true
