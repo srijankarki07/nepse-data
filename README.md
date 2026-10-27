@@ -181,20 +181,20 @@ losing the property that a non-trading day is a no-op.
 
 ## How it runs
 
-A session appears **within half an hour of the close**. NEPSE closes at 15:00 Kathmandu
-(09:15 UTC), and the target is 09:45 UTC.
+A session appears **within half an hour of the close**. NEPSE closes at 3:00 PM NPT,
+and the target is 3:30 PM NPT.
 
 Two triggers, because one of them cannot make that promise and the other is not allowed to
 be a single point of failure:
 
 | Trigger | Fires | Waits | Role |
 | --- | --- | --- | --- |
-| Cloudflare Worker cron (`ops/dispatch/`) | 09:20 UTC | up to 25 min | the punctual one |
-| `daily.yml` `schedule` | 10:15 and 14:30 UTC | reads once | the backstop |
+| Cloudflare Worker cron (`ops/dispatch/`) | 3:05 PM, 3:52 PM, 6:05 PM NPT | up to 25 min | the punctual one, and its late-publish retries |
+| `daily.yml` `schedule` | 4:00 PM and 8:15 PM NPT | reads once | the backstop |
 
 **GitHub's own schedule is the backstop, not the trigger, and that is a measured decision.**
 Over the six sessions from 2026-10-01 it fired between **4h28m and 9h02m late**, and on
-2026-10-02 it did not fire at all. The 2026-10-05 session was committed at 01:02 the next
+2026-10-02 it did not fire at all. The 2026-10-05 session was committed at 1:02 AM the next
 morning. `created_at == run_started_at` on each of those runs, so GitHub was queueing the
 event, not waiting for a runner. A `workflow_dispatch` starts immediately, so the Worker
 exists to press that button on time; the cron stays for the day the Worker is broken, its
@@ -202,7 +202,7 @@ token has expired, or Cloudflare is down.
 
 **The job waits for the session rather than running at a chosen hour.** The fetch polls the
 source until the session appears, so nothing has to guess when the source publishes, and a
-session that lands at 09:31 is archived at 09:31. Two things guard what is written:
+session that lands at 3:31 PM is archived at 3:31 PM. Two things guard what is written:
 
 - **It must hold still.** After the page first reports the session, it is read again a
   minute later and the two readings must agree, compared as CSV. A table that is still
@@ -219,7 +219,7 @@ session that lands at 09:31 is archived at 09:31. Two things guard what is writt
 The backstop passes `--wait 0`, so a GitHub-timed run reads once and decides instead of
 sitting on a runner for half an hour. A run that starts late still archives the right day:
 the loop waits for the session the *source* is showing, never for "today" as the runner's
-clock sees it. That is what let the 01:02 case above recover its day rather than miss it.
+clock sees it. That is what let the 1:02 AM case above recover its day rather than miss it.
 
 **Every day, rather than on trading days, because the trading week is not fixed.** The
 archive itself shows it changing: Sunday-to-Thursday sessions run from 2011 until 5 April

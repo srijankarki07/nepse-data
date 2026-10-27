@@ -1,8 +1,9 @@
 # The punctual trigger
 
-A Cloudflare Worker whose only job is to call GitHub at 09:20 UTC and ask it to run
-`daily.yml`. It exists because GitHub's own cron cannot be relied on to fire on time, and
-the archive's whole promise is that a session appears within half an hour of the close.
+A Cloudflare Worker whose only job is to call GitHub at 3:05 PM NPT and ask it to run
+`daily.yml`, then again at 3:52 PM and 6:05 PM if the source has not published the session
+yet. It exists because GitHub's own cron cannot be relied on to fire on time, and the
+archive's whole promise is that a session appears within half an hour of the close.
 
 The measurements that made the case are in the header of `.github/workflows/daily.yml` and
 in `HANDOFF.md`. In short: over the six sessions from 2026-10-01 the `schedule` event was
@@ -10,7 +11,7 @@ between 4h28m and 9h02m late, and one day it never fired. `workflow_dispatch` st
 immediately; only the trigger was missing.
 
 **This is free.** Cloudflare's Workers Free plan includes Cron Triggers, with a
-one-minute minimum interval and five triggers per account. This uses two, makes one
+one-minute minimum interval and five triggers per account. This uses three, makes one
 request per tick, and takes a few milliseconds of CPU against a 50 ms allowance. No paid
 feature is involved.
 
@@ -68,6 +69,8 @@ does not declare. So the workflow change lands first, then this.
    curl "http://localhost:8787/__scheduled?cron=20+9+*+*+*"
    ```
 
+   Cloudflare cron expressions are always UTC, so `20 9 * * *` is 3:05 PM NPT.
+
    Then confirm a run appeared and that it received its budget:
 
    ```bash
@@ -102,7 +105,7 @@ would let anyone who found it spend Actions minutes and push commits to this rep
 
 **The token expiring is the failure to plan for.** A fine-grained token has a maximum
 lifetime, and when it lapses the Worker starts failing every tick and says nothing. Nothing
-breaks immediately, because the 10:15 UTC cron backstop still archives the day, but the
+breaks immediately, because the 4:00 PM NPT cron backstop still archives the day, but the
 data starts arriving hours late, exactly as it did before this Worker existed. The alarm
 that catches it is in `daily.yml`: when the *cron* is the run that has to archive a session
 more than 45 minutes after its close, it fails, and a failed run emails you. Hand dispatches

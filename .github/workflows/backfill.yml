@@ -22,7 +22,7 @@ name: Backfill history
 # ## Why it shares the daily job's concurrency group
 #
 # `daily-prices` is the same group `daily.yml` uses, which means a backfill *queues* the
-# 10:15 UTC daily run rather than racing it. That delay is the point: two jobs writing
+# 4:00 PM NPT daily run rather than racing it. That delay is the point: two jobs writing
 # and pushing to `main` at once can leave the loser's push rejected, and the loser would
 # most likely be the daily job — whose failure mode is a trading day quietly never
 # appearing in the archive. A delayed daily run is visible; a lost one is not.

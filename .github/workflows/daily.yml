@@ -4,21 +4,23 @@ name: Daily prices
 #
 # ## What triggers it, and why it is not only the schedule
 #
-# NEPSE closes at 15:00 Kathmandu (09:15 UTC). The promise this workflow makes is that the
-# day's session is committed within half an hour of that, by 09:45 UTC.
+# NEPSE closes at 3:00 PM NPT (09:15 UTC). The promise this workflow makes is that the
+# day's session is committed within half an hour of that, by 3:30 PM NPT.
 #
 # **The GitHub schedule cannot make that promise, and this repository measured it.** Over
 # the six sessions from 2026-10-01 the `schedule` event fired between 4h28m and 9h02m late,
 # and on 2026-10-02 it did not fire at all: `created_at == run_started_at` on every run, so
 # the delay is GitHub queueing the event, not a runner waiting for a machine. The 2026-10-05
-# session was committed at 01:02 Kathmandu the following morning. `schedule` is a
+# session was committed at 1:02 AM NPT the following morning. `schedule` is a
 # best-effort queue, and a dropped run leaves nothing on the Actions page to show for it.
 #
 # So the punctual trigger is external: a Cloudflare Worker cron (see `ops/dispatch/`) fires
-# at 09:20 UTC and dispatches this workflow, which starts immediately where `schedule` does
-# not. The cron below stays as the **backstop**, for the day the Worker is broken, its token
-# has expired, or Cloudflare is down. A backstop that is hours late is still enormously better
-# than a day that never arrives, and it is the reason nothing here needs to be perfect.
+# at 3:05 PM NPT and dispatches this workflow, which starts immediately where `schedule`
+# does not. It fires again at 3:52 PM and 6:05 PM NPT, for the day the source publishes
+# late. The cron below stays as the **backstop**, for the day the Worker is broken, its
+# token has expired, or Cloudflare is down. A backstop that is hours late is still
+# enormously better than a day that never arrives, and it is the reason nothing here needs
+# to be perfect.
 #
 # ## Why the job waits rather than running at a chosen hour
 #
@@ -31,7 +33,7 @@ name: Daily prices
 # sitting on a runner. It is hours late anyway, by which time the source has long since
 # settled. **A run that starts late still archives the right day**: the loop waits for the
 # session the *source* is showing, never for "today" as the runner's clock sees it. That is
-# what makes the 01:02-Kathmandu case above recover the day rather than miss it.
+# what makes the 1:02 AM NPT case above recover the day rather than miss it.
 #
 # ## Why the schedule runs every day
 #
@@ -68,8 +70,11 @@ on:
   schedule:
     # The backstop. Two slots, because GitHub sometimes drops a run outright rather than
     # delaying it (2026-10-02 was one), and a duplicate run commits nothing.
-    - cron: "15 10 * * *"
-    - cron: "30 14 * * *"
+    #
+    # GitHub reads these in UTC; Kathmandu is UTC+5:45. The slots are 4:00 PM and
+    # 8:15 PM NPT.
+    - cron: "15 10 * * *"   # 4:00 PM NPT
+    - cron: "30 14 * * *"   # 8:15 PM NPT
   # So a failed or missed day can be picked up without waiting for tomorrow, and so the
   # Cloudflare Worker has something to call. Safe to press repeatedly: re-fetching a
   # session already archived writes nothing.
@@ -93,9 +98,10 @@ permissions:
 # One consequence worth knowing, because it is invisible: GitHub keeps at most one running
 # and one *pending* run per group, and a newly queued run evicts the pending one. So if a
 # long backfill (which shares this group on purpose, see backfill.yml) is running when the
-# Worker dispatches at 09:20, the daily run goes pending, and the 10:15 backstop, arriving
-# later, cancels it and takes the slot. Nothing is lost, since the survivor does the same
-# work, but the punctual promise is broken for that day and the cancellation notifies
+# Worker dispatches at 3:05 PM NPT, the daily run goes pending, and the 4:00 PM NPT
+# backstop, arriving later, cancels it and takes the slot. Nothing is lost, since the
+# survivor does the same work, but the punctual promise is broken for that day and the
+# cancellation notifies
 # nobody. Backfills are hand-dispatched and rare, so this is a trade rather than a defect:
 # the alternative, letting two jobs write and push to main at once, risks a rejected push
 # and a session that never lands at all.
@@ -228,6 +234,8 @@ jobs:
           EVENT: ${{ github.event_name }}
         run: |
           SESSION="${{ steps.commit.outputs.session }}"
+          # The close is 3:00 PM NPT, which is 09:15 UTC. The arithmetic is in UTC epoch
+          # seconds (`date -u`), so the comparison stays correct regardless of the prose.
           CLOSE=$(date -u -d "${SESSION} 09:15:00" +%s)
           LATE=$(( $(date -u +%s) - CLOSE ))
 
