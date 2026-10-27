@@ -281,8 +281,8 @@ describe("parseBackfillDay: the real dated response", () => {
 
   it("refuses a response that answers for a different day", () => {
     // The heading echoes the requested date on this route, so a mismatch means the
-    // endpoint went and got the current session instead — the exact behaviour every
-    // dead route in HANDOFF.md showed.
+    // endpoint went and got the current session instead, the exact behaviour every
+    // dead backfill route showed.
     expect(() => parseBackfillDay(datedCapture, "2024-06-12")).toThrow(/fallen back/);
   });
 

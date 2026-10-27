@@ -15,3 +15,8 @@ data/**/*.tmp
 # rather than in Cloudflare's secret store. This repository is public, so a stray
 # `git add -A` here would publish a token that can start workflow runs.
 .dev.vars
+
+# Personal notes, kept only in the maintainer's working tree. The public repository holds
+# the code, the data and the documentation end users need, not internal handoff state.
+# CI also refuses to build if this file ever becomes tracked again.
+HANDOFF.md

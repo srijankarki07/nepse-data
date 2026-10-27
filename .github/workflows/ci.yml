@@ -20,6 +20,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # HANDOFF.md is the maintainer's personal notes and is gitignored. This catches a
+      # `git add -f` or an old checkout that still tracks it, so it cannot reach `main`.
+      - name: Refuse to track personal notes
+        run: |
+          if git ls-files --error-unmatch HANDOFF.md >/dev/null 2>&1; then
+            echo "::error::HANDOFF.md must stay untracked. Run: git rm --cached HANDOFF.md"
+            exit 1
+          fi
+
       - uses: pnpm/action-setup@v4
         with:
           version: 10

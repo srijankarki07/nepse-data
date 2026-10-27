@@ -5,8 +5,9 @@ A Cloudflare Worker whose only job is to call GitHub at 3:05 PM NPT and ask it t
 yet. It exists because GitHub's own cron cannot be relied on to fire on time, and the
 archive's whole promise is that a session appears within half an hour of the close.
 
-The measurements that made the case are in the header of `.github/workflows/daily.yml` and
-in `HANDOFF.md`. In short: over the six sessions from 2026-10-01 the `schedule` event was
+The measurements that made the case are in the header of
+`.github/workflows/daily.yml`. In short: over the six sessions from 2026-10-01 the
+`schedule` event was
 between 4h28m and 9h02m late, and one day it never fired. `workflow_dispatch` starts
 immediately; only the trigger was missing.
 

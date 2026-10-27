@@ -265,9 +265,9 @@ interface FragmentOptions {
   /**
    * When set, the heading must name exactly this day.
    *
-   * Catches the endpoint quietly falling back to the current session — the behaviour
-   * every dead route in HANDOFF.md exhibited — which would otherwise file live prices
-   * under a historical date.
+   * Catches the endpoint quietly falling back to the current session, the behaviour
+   * every dead backfill route exhibited, which would otherwise file live prices under a
+   * historical date.
    */
   expectDate?: string;
   /**

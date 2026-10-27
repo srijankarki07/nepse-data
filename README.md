@@ -15,8 +15,6 @@ on another person's dataset being maintained.
 > This repository is **public**. That was a decision rather than a default: a published
 > archive of these figures is redistribution, and the reasoning for and against is kept
 > in [Provenance](#provenance) rather than deleted now that the answer changed.
->
-> [HANDOFF.md](HANDOFF.md) has the current state and what remains unverified.
 
 ## Layout
 
@@ -341,7 +339,7 @@ collapsed to a single row and the day is archived. Where the response instead ho
 consecutive sessions interleaved (`2011-01-03`, whose second row opens exactly where the
 first closed), or two rows that disagree about one session (`2013-03-03`, `2014-03-13`),
 the day is reported as failed rather than guessed at, and listed with its reason at the end
-of a sweep. HANDOFF.md sets out which is which, and why.
+of a sweep. The sweep report sets out which is which, and why.
 
 ## Provenance
 
